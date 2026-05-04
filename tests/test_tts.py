@@ -23,6 +23,16 @@ class FakeModel:
         return [[0.4, 0.5], [0.6, 0.7]], 24000
 
 
+class FakeVoxModel:
+    def __init__(self) -> None:
+        self.generate_calls = []
+        self.tts_model = type("FakeTTSModel", (), {"sample_rate": 48000})()
+
+    def generate(self, **kwargs):
+        self.generate_calls.append(kwargs)
+        return [0.8, 0.9]
+
+
 def test_split_text_lines_ignores_blank_lines() -> None:
     assert split_text_lines(" first\n\n second \n") == ["first", "second"]
 
@@ -107,3 +117,75 @@ def test_generate_voice_design_then_clone_reuses_designed_reference(monkeypatch,
     assert clone_model.prompt_args["ref_text"] == "reference style text"
     assert clone_model.generate_args["text"] == ["target one", "target two"]
     assert writes[0][0].endswith("design_reference.wav")
+
+
+def test_vox_controllable_clone_wraps_style_and_reference(monkeypatch, tmp_path: Path) -> None:
+    fake_model = FakeVoxModel()
+    writes = []
+    service = QwenTTSService(output_dir=tmp_path)
+    monkeypatch.setattr(service, "_load_voxcpm_model", lambda: fake_model)
+    monkeypatch.setattr("simplettsworkflow.tts.sf.write", lambda path, wav, sr: writes.append((path, wav, sr)))
+
+    result = service.generate_vox_controllable_clone(
+        ref_audio_path=tmp_path / "voice.wav",
+        texts=["hello", "second"],
+        style_instruction="sad and slow",
+        cfg_value=1.8,
+        inference_timesteps=12,
+        normalize=True,
+        denoise=False,
+    )
+
+    assert len(result.items) == 2
+    assert fake_model.generate_calls[0]["text"] == "(sad and slow)hello"
+    assert fake_model.generate_calls[0]["reference_wav_path"] == str(tmp_path / "voice.wav")
+    assert fake_model.generate_calls[0]["cfg_value"] == 1.8
+    assert fake_model.generate_calls[0]["normalize"] is True
+    assert writes[0][2] == 48000
+
+
+def test_vox_controllable_clone_without_style_does_not_add_empty_prefix(monkeypatch, tmp_path: Path) -> None:
+    fake_model = FakeVoxModel()
+    service = QwenTTSService(output_dir=tmp_path)
+    monkeypatch.setattr(service, "_load_voxcpm_model", lambda: fake_model)
+    monkeypatch.setattr("simplettsworkflow.tts.sf.write", lambda path, wav, sr: None)
+
+    service.generate_vox_controllable_clone(
+        ref_audio_path=tmp_path / "voice.wav",
+        texts=["hello"],
+        style_instruction="",
+    )
+
+    assert fake_model.generate_calls[0]["text"] == "hello"
+
+
+def test_vox_design_does_not_pass_reference_audio(monkeypatch, tmp_path: Path) -> None:
+    fake_model = FakeVoxModel()
+    service = QwenTTSService(output_dir=tmp_path)
+    monkeypatch.setattr(service, "_load_voxcpm_model", lambda: fake_model)
+    monkeypatch.setattr("simplettsworkflow.tts.sf.write", lambda path, wav, sr: None)
+
+    service.generate_vox_design(texts=["hello"], style_instruction="warm voice")
+
+    assert fake_model.generate_calls[0]["text"] == "(warm voice)hello"
+    assert "reference_wav_path" not in fake_model.generate_calls[0]
+
+
+def test_vox_hifi_clone_uses_prompt_text_without_style_prefix(monkeypatch, tmp_path: Path) -> None:
+    fake_model = FakeVoxModel()
+    service = QwenTTSService(output_dir=tmp_path)
+    monkeypatch.setattr(service, "_load_voxcpm_model", lambda: fake_model)
+    monkeypatch.setattr("simplettsworkflow.tts.sf.write", lambda path, wav, sr: None)
+
+    service.generate_vox_hifi_clone(
+        ref_audio_path=tmp_path / "voice.wav",
+        ref_text="exact transcript",
+        texts=["target text"],
+        style_instruction="ignored style",
+    )
+
+    call = fake_model.generate_calls[0]
+    assert call["text"] == "target text"
+    assert call["prompt_wav_path"] == str(tmp_path / "voice.wav")
+    assert call["prompt_text"] == "exact transcript"
+    assert call["reference_wav_path"] == str(tmp_path / "voice.wav")

@@ -6,9 +6,20 @@ const message = document.querySelector("#message");
 const resultList = document.querySelector("#result-list");
 
 const modeNotes = {
-  clone: "使用 Base 模型克隆上传音频。语气来自参考音频本身，不会把情绪描述拼进正文。",
-  voice_design: "使用 VoiceDesign 模型，情绪/语气描述会作为 instruct 参数生效。",
-  voice_design_then_clone: "先设计一段风格参考音频，再复用为 clone prompt 批量生成目标文本。",
+  vox_controllable_clone: "VoxCPM2 默认模式：上传参考音频克隆音色，情绪/语气描述会控制风格。",
+  vox_design: "VoxCPM2 语音设计：不需要参考音频，用语气描述直接生成新声音。",
+  vox_hifi_clone: "VoxCPM2 Hi-Fi 克隆：需要参考文本以提高相似度；此模式会忽略语气描述。",
+  clone: "Qwen3-TTS Base：克隆上传音频。语气来自参考音频本身，不支持独立语气控制。",
+  voice_design: "Qwen3-TTS VoiceDesign：情绪/语气描述会作为 instruct 参数生效。",
+  voice_design_then_clone: "Qwen3-TTS：先设计风格参考音频，再复用为 clone prompt 批量生成目标文本。",
+};
+
+const visibility = {
+  reference_audio: ["vox_controllable_clone", "vox_hifi_clone", "clone"],
+  reference_text: ["vox_hifi_clone", "clone"],
+  style: ["vox_controllable_clone", "vox_design", "voice_design", "voice_design_then_clone"],
+  voice_design_then_clone: ["voice_design_then_clone"],
+  vox_params: ["vox_controllable_clone", "vox_design", "vox_hifi_clone"],
 };
 
 modeSelect.addEventListener("change", updateModeUI);
@@ -69,15 +80,18 @@ function updateModeUI() {
   modeNote.textContent = modeNotes[mode];
 
   for (const group of document.querySelectorAll("[data-mode-group]")) {
-    const modes = group.dataset.modeGroup.split(" ");
-    const visible =
-      modes.includes(mode) ||
-      (group.dataset.modeGroup === "design" && mode !== "clone");
-    group.hidden = !visible;
+    const modes = visibility[group.dataset.modeGroup] || group.dataset.modeGroup.split(" ");
+    group.hidden = !modes.includes(mode);
   }
 
   for (const field of form.querySelectorAll("[data-required-when]")) {
     const modes = field.dataset.requiredWhen.split(" ");
     field.required = modes.includes(mode);
+  }
+
+  const styleField = form.elements.emotion_instruction;
+  styleField.disabled = mode === "vox_hifi_clone";
+  if (styleField.disabled) {
+    styleField.value = "";
   }
 }

@@ -152,6 +152,25 @@ textarea:focus {
   gap: 14px;
 }
 
+.toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.check input {
+  width: 18px;
+  min-height: 18px;
+}
+
 button {
   width: 100%;
   min-height: 48px;

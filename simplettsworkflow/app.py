@@ -13,6 +13,9 @@ from starlette.requests import Request
 from .settings import BASE_DIR, OUTPUT_DIR, UPLOAD_DIR
 from .tts import (
     MODE_CLONE,
+    MODE_VOX_CONTROLLABLE_CLONE,
+    MODE_VOX_DESIGN,
+    MODE_VOX_HIFI_CLONE,
     MODE_VOICE_DESIGN,
     MODE_VOICE_DESIGN_THEN_CLONE,
     QwenTTSService,
@@ -38,19 +41,59 @@ async def index(request: Request):
 @app.post("/api/generate")
 async def generate(
     ref_audio: UploadFile | None = File(None),
-    mode: str = Form(MODE_CLONE),
+    mode: str = Form(MODE_VOX_CONTROLLABLE_CLONE),
     ref_text: str = Form(""),
     texts: str = Form(""),
     language: str = Form("Auto"),
     emotion_instruction: str = Form(""),
     design_ref_text: str = Form(""),
+    cfg_value: float = Form(2.0),
+    inference_timesteps: int = Form(10),
+    normalize: bool = Form(False),
+    denoise: bool = Form(False),
 ):
     lines = split_text_lines(texts)
     if not lines:
         raise HTTPException(status_code=400, detail="At least one target text line is required.")
 
     try:
-        if mode == MODE_CLONE:
+        if mode == MODE_VOX_CONTROLLABLE_CLONE:
+            if ref_audio is None or not ref_audio.filename:
+                raise HTTPException(status_code=400, detail="Reference audio is required.")
+            result = service.generate_vox_controllable_clone(
+                ref_audio_path=_save_upload(ref_audio),
+                texts=lines,
+                style_instruction=emotion_instruction,
+                cfg_value=cfg_value,
+                inference_timesteps=inference_timesteps,
+                normalize=normalize,
+                denoise=denoise,
+            )
+        elif mode == MODE_VOX_DESIGN:
+            result = service.generate_vox_design(
+                texts=lines,
+                style_instruction=emotion_instruction,
+                cfg_value=cfg_value,
+                inference_timesteps=inference_timesteps,
+                normalize=normalize,
+                denoise=denoise,
+            )
+        elif mode == MODE_VOX_HIFI_CLONE:
+            if ref_audio is None or not ref_audio.filename:
+                raise HTTPException(status_code=400, detail="Reference audio is required.")
+            if not ref_text.strip():
+                raise HTTPException(status_code=400, detail="Reference text is required.")
+            result = service.generate_vox_hifi_clone(
+                ref_audio_path=_save_upload(ref_audio),
+                ref_text=ref_text,
+                texts=lines,
+                style_instruction=emotion_instruction,
+                cfg_value=cfg_value,
+                inference_timesteps=inference_timesteps,
+                normalize=normalize,
+                denoise=denoise,
+            )
+        elif mode == MODE_CLONE:
             if ref_audio is None or not ref_audio.filename:
                 raise HTTPException(status_code=400, detail="Reference audio is required.")
             if not ref_text.strip():

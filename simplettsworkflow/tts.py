@@ -10,9 +10,14 @@ from typing import Any
 
 import soundfile as sf
 
-from .settings import MODEL_ID, OUTPUT_DIR, VOICE_DESIGN_MODEL_ID
+from .settings import MODEL_ID, OUTPUT_DIR, VOICE_DESIGN_MODEL_ID, VOXCPM_MODEL_ID
 
 
+ENGINE_QWEN = "qwen3_tts"
+ENGINE_VOXCPM = "voxcpm2"
+MODE_VOX_CONTROLLABLE_CLONE = "vox_controllable_clone"
+MODE_VOX_DESIGN = "vox_design"
+MODE_VOX_HIFI_CLONE = "vox_hifi_clone"
 MODE_CLONE = "clone"
 MODE_VOICE_DESIGN = "voice_design"
 MODE_VOICE_DESIGN_THEN_CLONE = "voice_design_then_clone"
@@ -39,6 +44,7 @@ class QwenTTSService:
         output_dir: Path = OUTPUT_DIR,
         model_id: str | None = None,
         voice_design_model_id: str | None = None,
+        voxcpm_model_id: str | None = None,
     ) -> None:
         self.output_dir = output_dir
         self.model_id = model_id or os.getenv("QWEN_TTS_MODEL", MODEL_ID)
@@ -46,7 +52,9 @@ class QwenTTSService:
             "QWEN_TTS_VOICE_DESIGN_MODEL",
             VOICE_DESIGN_MODEL_ID,
         )
+        self.voxcpm_model_id = voxcpm_model_id or os.getenv("VOXCPM_MODEL", VOXCPM_MODEL_ID)
         self._models: dict[str, Any] = {}
+        self._voxcpm_model: Any | None = None
 
     def _load_model(self, model_id: str) -> Any:
         if model_id in self._models:
@@ -85,6 +93,21 @@ class QwenTTSService:
 
     def _load_voice_design_model(self) -> Any:
         return self._load_model(self.voice_design_model_id)
+
+    def _load_voxcpm_model(self) -> Any:
+        if self._voxcpm_model is not None:
+            return self._voxcpm_model
+
+        from voxcpm import VoxCPM
+
+        # VoxCPM2 is loaded only for Vox modes so Qwen workflows stay lightweight.
+        self._voxcpm_model = VoxCPM.from_pretrained(
+            self.voxcpm_model_id,
+            load_denoiser=_env_bool("VOXCPM_LOAD_DENOISER", False),
+            device=os.getenv("VOXCPM_DEVICE", "auto"),
+            optimize=_env_bool("VOXCPM_OPTIMIZE", True),
+        )
+        return self._voxcpm_model
 
     def generate_voice_clone(
         self,
@@ -134,13 +157,145 @@ class QwenTTSService:
 
         self._write_metadata(
             output_run_dir=output_run_dir,
+            engine=ENGINE_QWEN,
             mode=MODE_CLONE,
             model_id=self.model_id,
             ref_audio_path=ref_audio_path,
             ref_text=ref_text,
             language=language,
-            emotion_instruction=emotion_instruction,
+            style_instruction=emotion_instruction,
             items=items,
+        )
+        return GenerationResult(output_dir=str(output_run_dir), items=items)
+
+    def generate_vox_controllable_clone(
+        self,
+        *,
+        ref_audio_path: Path,
+        texts: list[str],
+        style_instruction: str | None = None,
+        cfg_value: float = 2.0,
+        inference_timesteps: int = 10,
+        normalize: bool = False,
+        denoise: bool = False,
+    ) -> GenerationResult:
+        clean_texts = _clean_texts(texts)
+        model = self._load_voxcpm_model()
+        output_run_dir = self._create_output_run_dir()
+        sample_rate = int(model.tts_model.sample_rate)
+        wavs = [
+            model.generate(
+                text=_apply_vox_control_prefix(text, style_instruction),
+                reference_wav_path=str(ref_audio_path),
+                cfg_value=cfg_value,
+                inference_timesteps=inference_timesteps,
+                normalize=normalize,
+                denoise=denoise,
+            )
+            for text in clean_texts
+        ]
+
+        items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
+        self._write_metadata(
+            output_run_dir=output_run_dir,
+            engine=ENGINE_VOXCPM,
+            mode=MODE_VOX_CONTROLLABLE_CLONE,
+            model_id=self.voxcpm_model_id,
+            ref_audio_path=ref_audio_path,
+            ref_text="",
+            language="Auto",
+            style_instruction=style_instruction,
+            items=items,
+            generation_params=_vox_generation_params(cfg_value, inference_timesteps, normalize, denoise),
+        )
+        return GenerationResult(output_dir=str(output_run_dir), items=items)
+
+    def generate_vox_design(
+        self,
+        *,
+        texts: list[str],
+        style_instruction: str | None = None,
+        cfg_value: float = 2.0,
+        inference_timesteps: int = 10,
+        normalize: bool = False,
+        denoise: bool = False,
+    ) -> GenerationResult:
+        clean_texts = _clean_texts(texts)
+        model = self._load_voxcpm_model()
+        output_run_dir = self._create_output_run_dir()
+        sample_rate = int(model.tts_model.sample_rate)
+        wavs = [
+            model.generate(
+                text=_apply_vox_control_prefix(text, style_instruction),
+                cfg_value=cfg_value,
+                inference_timesteps=inference_timesteps,
+                normalize=normalize,
+                denoise=denoise,
+            )
+            for text in clean_texts
+        ]
+
+        items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
+        self._write_metadata(
+            output_run_dir=output_run_dir,
+            engine=ENGINE_VOXCPM,
+            mode=MODE_VOX_DESIGN,
+            model_id=self.voxcpm_model_id,
+            ref_audio_path=None,
+            ref_text="",
+            language="Auto",
+            style_instruction=style_instruction,
+            items=items,
+            generation_params=_vox_generation_params(cfg_value, inference_timesteps, normalize, denoise),
+        )
+        return GenerationResult(output_dir=str(output_run_dir), items=items)
+
+    def generate_vox_hifi_clone(
+        self,
+        *,
+        ref_audio_path: Path,
+        ref_text: str,
+        texts: list[str],
+        style_instruction: str | None = None,
+        cfg_value: float = 2.0,
+        inference_timesteps: int = 10,
+        normalize: bool = False,
+        denoise: bool = False,
+    ) -> GenerationResult:
+        clean_ref_text = ref_text.strip()
+        if not clean_ref_text:
+            raise ValueError("Reference text is required for Vox Hi-Fi clone mode.")
+
+        clean_texts = _clean_texts(texts)
+        model = self._load_voxcpm_model()
+        output_run_dir = self._create_output_run_dir()
+        sample_rate = int(model.tts_model.sample_rate)
+        wavs = [
+            model.generate(
+                text=text,
+                prompt_wav_path=str(ref_audio_path),
+                prompt_text=clean_ref_text,
+                reference_wav_path=str(ref_audio_path),
+                cfg_value=cfg_value,
+                inference_timesteps=inference_timesteps,
+                normalize=normalize,
+                denoise=denoise,
+            )
+            for text in clean_texts
+        ]
+
+        items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
+        self._write_metadata(
+            output_run_dir=output_run_dir,
+            engine=ENGINE_VOXCPM,
+            mode=MODE_VOX_HIFI_CLONE,
+            model_id=self.voxcpm_model_id,
+            ref_audio_path=ref_audio_path,
+            ref_text=clean_ref_text,
+            language="Auto",
+            style_instruction=style_instruction,
+            items=items,
+            generation_params=_vox_generation_params(cfg_value, inference_timesteps, normalize, denoise),
         )
         return GenerationResult(output_dir=str(output_run_dir), items=items)
 
@@ -173,12 +328,13 @@ class QwenTTSService:
         items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
         self._write_metadata(
             output_run_dir=output_run_dir,
+            engine=ENGINE_QWEN,
             mode=MODE_VOICE_DESIGN,
             model_id=self.voice_design_model_id,
             ref_audio_path=None,
             ref_text="",
             language=language,
-            emotion_instruction=instruction,
+            style_instruction=instruction,
             items=items,
         )
         return GenerationResult(output_dir=str(output_run_dir), items=items)
@@ -229,12 +385,13 @@ class QwenTTSService:
         items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
         self._write_metadata(
             output_run_dir=output_run_dir,
+            engine=ENGINE_QWEN,
             mode=MODE_VOICE_DESIGN_THEN_CLONE,
             model_id=f"{self.voice_design_model_id} -> {self.model_id}",
             ref_audio_path=design_ref_audio_path,
             ref_text=clean_ref_text,
             language=language,
-            emotion_instruction=instruction,
+            style_instruction=instruction,
             items=items,
         )
         return GenerationResult(output_dir=str(output_run_dir), items=items)
@@ -283,24 +440,30 @@ class QwenTTSService:
     def _write_metadata(
         *,
         output_run_dir: Path,
+        engine: str,
         mode: str,
         model_id: str,
         ref_audio_path: Path | None,
         ref_text: str,
         language: str,
-        emotion_instruction: str | None,
+        style_instruction: str | None,
         items: list[GeneratedAudio],
+        generation_params: dict[str, Any] | None = None,
     ) -> None:
         metadata = {
             "created_at": datetime.now().isoformat(timespec="seconds"),
+            "engine": engine,
             "mode": mode,
             "model": model_id,
             "reference_audio": str(ref_audio_path) if ref_audio_path else "",
             "reference_text": ref_text,
             "language": language,
-            "emotion_instruction": emotion_instruction or "",
+            "style_instruction": style_instruction or "",
+            "emotion_instruction": style_instruction or "",
             "items": [item.__dict__ for item in items],
         }
+        if generation_params is not None:
+            metadata.update(generation_params)
         metadata_path = output_run_dir / "metadata.json"
         metadata_path.write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2),
@@ -310,3 +473,38 @@ class QwenTTSService:
 
 def split_text_lines(texts: str) -> list[str]:
     return [line.strip() for line in texts.splitlines() if line.strip()]
+
+
+def _clean_texts(texts: list[str]) -> list[str]:
+    clean_texts = [line.strip() for line in texts if line.strip()]
+    if not clean_texts:
+        raise ValueError("At least one target text line is required.")
+    return clean_texts
+
+
+def _apply_vox_control_prefix(text: str, style_instruction: str | None) -> str:
+    instruction = (style_instruction or "").strip()
+    if not instruction:
+        return text
+    return f"({instruction}){text}"
+
+
+def _vox_generation_params(
+    cfg_value: float,
+    inference_timesteps: int,
+    normalize: bool,
+    denoise: bool,
+) -> dict[str, Any]:
+    return {
+        "cfg_value": cfg_value,
+        "inference_timesteps": inference_timesteps,
+        "normalize": normalize,
+        "denoise": denoise,
+    }
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
