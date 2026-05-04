@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from importlib.util import find_spec
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ import soundfile as sf
 from .settings import MODEL_ID, OUTPUT_DIR, VOICE_DESIGN_MODEL_ID, VOXCPM_MODEL_ID
 
 
+logger = logging.getLogger(__name__)
 ENGINE_QWEN = "qwen3_tts"
 ENGINE_VOXCPM = "voxcpm2"
 MODE_VOX_CONTROLLABLE_CLONE = "vox_controllable_clone"
@@ -58,6 +60,7 @@ class QwenTTSService:
 
     def _load_model(self, model_id: str) -> Any:
         if model_id in self._models:
+            logger.info("Using cached Qwen model: model=%s", model_id)
             return self._models[model_id]
 
         from qwen_tts import Qwen3TTSModel
@@ -85,7 +88,9 @@ class QwenTTSService:
         else:
             kwargs.update({"device_map": "cpu", "dtype": torch.float32})
 
+        logger.info("Loading Qwen model: model=%s kwargs=%s", model_id, _safe_kwargs(kwargs))
         self._models[model_id] = Qwen3TTSModel.from_pretrained(model_id, **kwargs)
+        logger.info("Qwen model loaded: model=%s", model_id)
         return self._models[model_id]
 
     def _load_clone_model(self) -> Any:
@@ -96,17 +101,29 @@ class QwenTTSService:
 
     def _load_voxcpm_model(self) -> Any:
         if self._voxcpm_model is not None:
+            logger.info("Using cached VoxCPM2 model: model=%s", self.voxcpm_model_id)
             return self._voxcpm_model
 
         from voxcpm import VoxCPM
 
+        load_denoiser = _env_bool("VOXCPM_LOAD_DENOISER", False)
+        device = os.getenv("VOXCPM_DEVICE", "auto")
+        optimize = _env_bool("VOXCPM_OPTIMIZE", True)
+        logger.info(
+            "Loading VoxCPM2 model: model=%s load_denoiser=%s device=%s optimize=%s",
+            self.voxcpm_model_id,
+            load_denoiser,
+            device,
+            optimize,
+        )
         # VoxCPM2 is loaded only for Vox modes so Qwen workflows stay lightweight.
         self._voxcpm_model = VoxCPM.from_pretrained(
             self.voxcpm_model_id,
-            load_denoiser=_env_bool("VOXCPM_LOAD_DENOISER", False),
-            device=os.getenv("VOXCPM_DEVICE", "auto"),
-            optimize=_env_bool("VOXCPM_OPTIMIZE", True),
+            load_denoiser=load_denoiser,
+            device=device,
+            optimize=optimize,
         )
+        logger.info("VoxCPM2 model loaded: model=%s", self.voxcpm_model_id)
         return self._voxcpm_model
 
     def generate_voice_clone(
@@ -124,6 +141,13 @@ class QwenTTSService:
 
         model = self._load_clone_model()
         output_run_dir = self._create_output_run_dir()
+        logger.info(
+            "Qwen clone generation started: lines=%s language=%s ref_audio=%s output_dir=%s",
+            len(clean_texts),
+            language,
+            ref_audio_path,
+            output_run_dir,
+        )
 
         # Reuse the clone prompt so one reference clip can generate many lines efficiently.
         voice_clone_prompt = model.create_voice_clone_prompt(
@@ -139,6 +163,7 @@ class QwenTTSService:
             language=languages,
             voice_clone_prompt=voice_clone_prompt,
         )
+        logger.info("Qwen clone model call completed: lines=%s sample_rate=%s", len(clean_texts), sample_rate)
 
         items: list[GeneratedAudio] = []
         for index, (original_text, wav) in enumerate(zip(clean_texts, wavs), start=1):
@@ -166,6 +191,7 @@ class QwenTTSService:
             style_instruction=emotion_instruction,
             items=items,
         )
+        logger.info("Qwen clone generation completed: outputs=%s output_dir=%s", len(items), output_run_dir)
         return GenerationResult(output_dir=str(output_run_dir), items=items)
 
     def generate_vox_controllable_clone(
@@ -183,8 +209,25 @@ class QwenTTSService:
         model = self._load_voxcpm_model()
         output_run_dir = self._create_output_run_dir()
         sample_rate = int(model.tts_model.sample_rate)
-        wavs = [
-            model.generate(
+        logger.info(
+            "Vox controllable clone started: lines=%s ref_audio=%s cfg=%s steps=%s normalize=%s denoise=%s output_dir=%s",
+            len(clean_texts),
+            ref_audio_path,
+            cfg_value,
+            inference_timesteps,
+            normalize,
+            denoise,
+            output_run_dir,
+        )
+        wavs = []
+        for index, text in enumerate(clean_texts, start=1):
+            logger.info(
+                "Vox controllable clone line started: line=%s/%s text=%s",
+                index,
+                len(clean_texts),
+                _preview(text),
+            )
+            wav = model.generate(
                 text=_apply_vox_control_prefix(text, style_instruction),
                 reference_wav_path=str(ref_audio_path),
                 cfg_value=cfg_value,
@@ -192,8 +235,8 @@ class QwenTTSService:
                 normalize=normalize,
                 denoise=denoise,
             )
-            for text in clean_texts
-        ]
+            wavs.append(wav)
+            logger.info("Vox controllable clone line completed: line=%s/%s", index, len(clean_texts))
 
         items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
         self._write_metadata(
@@ -208,6 +251,7 @@ class QwenTTSService:
             items=items,
             generation_params=_vox_generation_params(cfg_value, inference_timesteps, normalize, denoise),
         )
+        logger.info("Vox controllable clone completed: outputs=%s output_dir=%s", len(items), output_run_dir)
         return GenerationResult(output_dir=str(output_run_dir), items=items)
 
     def generate_vox_design(
@@ -224,16 +268,27 @@ class QwenTTSService:
         model = self._load_voxcpm_model()
         output_run_dir = self._create_output_run_dir()
         sample_rate = int(model.tts_model.sample_rate)
-        wavs = [
-            model.generate(
+        logger.info(
+            "Vox design started: lines=%s cfg=%s steps=%s normalize=%s denoise=%s output_dir=%s",
+            len(clean_texts),
+            cfg_value,
+            inference_timesteps,
+            normalize,
+            denoise,
+            output_run_dir,
+        )
+        wavs = []
+        for index, text in enumerate(clean_texts, start=1):
+            logger.info("Vox design line started: line=%s/%s text=%s", index, len(clean_texts), _preview(text))
+            wav = model.generate(
                 text=_apply_vox_control_prefix(text, style_instruction),
                 cfg_value=cfg_value,
                 inference_timesteps=inference_timesteps,
                 normalize=normalize,
                 denoise=denoise,
             )
-            for text in clean_texts
-        ]
+            wavs.append(wav)
+            logger.info("Vox design line completed: line=%s/%s", index, len(clean_texts))
 
         items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
         self._write_metadata(
@@ -248,6 +303,7 @@ class QwenTTSService:
             items=items,
             generation_params=_vox_generation_params(cfg_value, inference_timesteps, normalize, denoise),
         )
+        logger.info("Vox design completed: outputs=%s output_dir=%s", len(items), output_run_dir)
         return GenerationResult(output_dir=str(output_run_dir), items=items)
 
     def generate_vox_hifi_clone(
@@ -270,8 +326,20 @@ class QwenTTSService:
         model = self._load_voxcpm_model()
         output_run_dir = self._create_output_run_dir()
         sample_rate = int(model.tts_model.sample_rate)
-        wavs = [
-            model.generate(
+        logger.info(
+            "Vox Hi-Fi clone started: lines=%s ref_audio=%s cfg=%s steps=%s normalize=%s denoise=%s output_dir=%s",
+            len(clean_texts),
+            ref_audio_path,
+            cfg_value,
+            inference_timesteps,
+            normalize,
+            denoise,
+            output_run_dir,
+        )
+        wavs = []
+        for index, text in enumerate(clean_texts, start=1):
+            logger.info("Vox Hi-Fi clone line started: line=%s/%s text=%s", index, len(clean_texts), _preview(text))
+            wav = model.generate(
                 text=text,
                 prompt_wav_path=str(ref_audio_path),
                 prompt_text=clean_ref_text,
@@ -281,8 +349,8 @@ class QwenTTSService:
                 normalize=normalize,
                 denoise=denoise,
             )
-            for text in clean_texts
-        ]
+            wavs.append(wav)
+            logger.info("Vox Hi-Fi clone line completed: line=%s/%s", index, len(clean_texts))
 
         items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
         self._write_metadata(
@@ -297,6 +365,7 @@ class QwenTTSService:
             items=items,
             generation_params=_vox_generation_params(cfg_value, inference_timesteps, normalize, denoise),
         )
+        logger.info("Vox Hi-Fi clone completed: outputs=%s output_dir=%s", len(items), output_run_dir)
         return GenerationResult(output_dir=str(output_run_dir), items=items)
 
     def generate_voice_design(
@@ -315,6 +384,12 @@ class QwenTTSService:
 
         model = self._load_voice_design_model()
         output_run_dir = self._create_output_run_dir()
+        logger.info(
+            "Qwen voice design started: lines=%s language=%s output_dir=%s",
+            len(clean_texts),
+            language,
+            output_run_dir,
+        )
         languages = self._languages_for_batch(language, len(clean_texts))
         target_text: str | list[str] = clean_texts[0] if len(clean_texts) == 1 else clean_texts
         instruct: str | list[str] = instruction if len(clean_texts) == 1 else [instruction] * len(clean_texts)
@@ -324,6 +399,7 @@ class QwenTTSService:
             language=languages,
             instruct=instruct,
         )
+        logger.info("Qwen voice design model call completed: lines=%s sample_rate=%s", len(clean_texts), sample_rate)
 
         items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
         self._write_metadata(
@@ -337,6 +413,7 @@ class QwenTTSService:
             style_instruction=instruction,
             items=items,
         )
+        logger.info("Qwen voice design completed: outputs=%s output_dir=%s", len(items), output_run_dir)
         return GenerationResult(output_dir=str(output_run_dir), items=items)
 
     def generate_voice_design_then_clone(
@@ -360,6 +437,12 @@ class QwenTTSService:
         output_run_dir = self._create_output_run_dir()
         design_model = self._load_voice_design_model()
         clone_model = self._load_clone_model()
+        logger.info(
+            "Qwen design-then-clone started: lines=%s language=%s output_dir=%s",
+            len(clean_texts),
+            language,
+            output_run_dir,
+        )
 
         # Generate one style reference clip with the real instruct API, then reuse it as clone prompt.
         ref_wavs, ref_sample_rate = design_model.generate_voice_design(
@@ -369,6 +452,7 @@ class QwenTTSService:
         )
         design_ref_audio_path = output_run_dir / "design_reference.wav"
         sf.write(str(design_ref_audio_path), ref_wavs[0], ref_sample_rate)
+        logger.info("Qwen designed reference audio written: path=%s sample_rate=%s", design_ref_audio_path, ref_sample_rate)
 
         voice_clone_prompt = clone_model.create_voice_clone_prompt(
             ref_audio=(ref_wavs[0], ref_sample_rate),
@@ -381,6 +465,7 @@ class QwenTTSService:
             language=languages,
             voice_clone_prompt=voice_clone_prompt,
         )
+        logger.info("Qwen design-then-clone model call completed: lines=%s sample_rate=%s", len(clean_texts), sample_rate)
 
         items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
         self._write_metadata(
@@ -394,6 +479,7 @@ class QwenTTSService:
             style_instruction=instruction,
             items=items,
         )
+        logger.info("Qwen design-then-clone completed: outputs=%s output_dir=%s", len(items), output_run_dir)
         return GenerationResult(output_dir=str(output_run_dir), items=items)
 
     def _create_output_run_dir(self) -> Path:
@@ -406,6 +492,7 @@ class QwenTTSService:
 
         # All generated audio and metadata stay under the project output folder.
         output_run_dir.mkdir(parents=True, exist_ok=False)
+        logger.info("Created output directory: %s", output_run_dir)
         return output_run_dir
 
     @staticmethod
@@ -425,6 +512,13 @@ class QwenTTSService:
             filename = f"line_{index:03}.wav"
             audio_path = output_run_dir / filename
             sf.write(str(audio_path), wav, sample_rate)
+            logger.info(
+                "Generated audio written: index=%s filename=%s sample_rate=%s path=%s",
+                index,
+                filename,
+                sample_rate,
+                audio_path,
+            )
             items.append(
                 GeneratedAudio(
                     index=index,
@@ -469,6 +563,7 @@ class QwenTTSService:
             json.dumps(metadata, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        logger.info("Generation metadata written: path=%s", metadata_path)
 
 
 def split_text_lines(texts: str) -> list[str]:
@@ -508,3 +603,14 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _preview(text: str, limit: int = 80) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[:limit]}..."
+
+
+def _safe_kwargs(kwargs: dict[str, Any]) -> dict[str, str]:
+    return {key: str(value) for key, value in kwargs.items()}

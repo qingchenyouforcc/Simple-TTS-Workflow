@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from .tts import (
 )
 
 
+logger = logging.getLogger(__name__)
 app = FastAPI(title="Simple Qwen3-TTS Workflow")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 service = QwenTTSService()
@@ -56,12 +58,26 @@ async def generate(
     if not lines:
         raise HTTPException(status_code=400, detail="At least one target text line is required.")
 
+    logger.info(
+        "TTS request received: mode=%s lines=%s language=%s cfg=%s steps=%s normalize=%s denoise=%s has_ref_audio=%s has_style=%s",
+        mode,
+        len(lines),
+        language,
+        cfg_value,
+        inference_timesteps,
+        normalize,
+        denoise,
+        ref_audio is not None and bool(ref_audio.filename),
+        bool(emotion_instruction.strip()),
+    )
+
     try:
         if mode == MODE_VOX_CONTROLLABLE_CLONE:
             if ref_audio is None or not ref_audio.filename:
                 raise HTTPException(status_code=400, detail="Reference audio is required.")
+            ref_audio_path = _save_upload(ref_audio)
             result = service.generate_vox_controllable_clone(
-                ref_audio_path=_save_upload(ref_audio),
+                ref_audio_path=ref_audio_path,
                 texts=lines,
                 style_instruction=emotion_instruction,
                 cfg_value=cfg_value,
@@ -83,8 +99,9 @@ async def generate(
                 raise HTTPException(status_code=400, detail="Reference audio is required.")
             if not ref_text.strip():
                 raise HTTPException(status_code=400, detail="Reference text is required.")
+            ref_audio_path = _save_upload(ref_audio)
             result = service.generate_vox_hifi_clone(
-                ref_audio_path=_save_upload(ref_audio),
+                ref_audio_path=ref_audio_path,
                 ref_text=ref_text,
                 texts=lines,
                 style_instruction=emotion_instruction,
@@ -98,8 +115,9 @@ async def generate(
                 raise HTTPException(status_code=400, detail="Reference audio is required.")
             if not ref_text.strip():
                 raise HTTPException(status_code=400, detail="Reference text is required.")
+            ref_audio_path = _save_upload(ref_audio)
             result = service.generate_voice_clone(
-                ref_audio_path=_save_upload(ref_audio),
+                ref_audio_path=ref_audio_path,
                 ref_text=ref_text,
                 texts=lines,
                 language=language,
@@ -123,10 +141,18 @@ async def generate(
     except HTTPException:
         raise
     except ValueError as exc:
+        logger.warning("TTS request rejected: mode=%s error=%s", mode, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("TTS generation failed: mode=%s", mode)
         raise HTTPException(status_code=500, detail=f"TTS generation failed: {exc}") from exc
 
+    logger.info(
+        "TTS request completed: mode=%s outputs=%s output_dir=%s",
+        mode,
+        len(result.items),
+        result.output_dir,
+    )
     return JSONResponse(
         {
             "output_dir": result.output_dir,
@@ -142,4 +168,5 @@ def _save_upload(upload: UploadFile) -> Path:
     destination = run_dir / f"reference{suffix}"
     with destination.open("wb") as file_obj:
         shutil.copyfileobj(upload.file, file_obj)
+    logger.info("Saved reference upload: filename=%s path=%s", upload.filename, destination)
     return destination
