@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import json
 import os
 from importlib.util import find_spec
@@ -11,7 +10,12 @@ from typing import Any
 
 import soundfile as sf
 
-from .settings import MODEL_ID, OUTPUT_DIR
+from .settings import MODEL_ID, OUTPUT_DIR, VOICE_DESIGN_MODEL_ID
+
+
+MODE_CLONE = "clone"
+MODE_VOICE_DESIGN = "voice_design"
+MODE_VOICE_DESIGN_THEN_CLONE = "voice_design_then_clone"
 
 
 @dataclass(frozen=True)
@@ -30,14 +34,23 @@ class GenerationResult:
 
 
 class QwenTTSService:
-    def __init__(self, output_dir: Path = OUTPUT_DIR, model_id: str | None = None) -> None:
+    def __init__(
+        self,
+        output_dir: Path = OUTPUT_DIR,
+        model_id: str | None = None,
+        voice_design_model_id: str | None = None,
+    ) -> None:
         self.output_dir = output_dir
         self.model_id = model_id or os.getenv("QWEN_TTS_MODEL", MODEL_ID)
-        self._model: Any | None = None
+        self.voice_design_model_id = voice_design_model_id or os.getenv(
+            "QWEN_TTS_VOICE_DESIGN_MODEL",
+            VOICE_DESIGN_MODEL_ID,
+        )
+        self._models: dict[str, Any] = {}
 
-    def _load_model(self) -> Any:
-        if self._model is not None:
-            return self._model
+    def _load_model(self, model_id: str) -> Any:
+        if model_id in self._models:
+            return self._models[model_id]
 
         from qwen_tts import Qwen3TTSModel
         import torch
@@ -64,8 +77,14 @@ class QwenTTSService:
         else:
             kwargs.update({"device_map": "cpu", "dtype": torch.float32})
 
-        self._model = Qwen3TTSModel.from_pretrained(self.model_id, **kwargs)
-        return self._model
+        self._models[model_id] = Qwen3TTSModel.from_pretrained(model_id, **kwargs)
+        return self._models[model_id]
+
+    def _load_clone_model(self) -> Any:
+        return self._load_model(self.model_id)
+
+    def _load_voice_design_model(self) -> Any:
+        return self._load_model(self.voice_design_model_id)
 
     def generate_voice_clone(
         self,
@@ -80,7 +99,7 @@ class QwenTTSService:
         if not clean_texts:
             raise ValueError("At least one target text line is required.")
 
-        model = self._load_model()
+        model = self._load_clone_model()
         output_run_dir = self._create_output_run_dir()
 
         # Reuse the clone prompt so one reference clip can generate many lines efficiently.
@@ -89,13 +108,9 @@ class QwenTTSService:
             ref_text=ref_text.strip(),
         )
 
-        prepared_texts = [
-            self._apply_experimental_emotion(line, emotion_instruction)
-            for line in clean_texts
-        ]
-        languages = self._languages_for_batch(language, len(prepared_texts))
+        languages = self._languages_for_batch(language, len(clean_texts))
 
-        target_text: str | list[str] = prepared_texts[0] if len(prepared_texts) == 1 else prepared_texts
+        target_text: str | list[str] = clean_texts[0] if len(clean_texts) == 1 else clean_texts
         wavs, sample_rate = model.generate_voice_clone(
             text=target_text,
             language=languages,
@@ -119,11 +134,107 @@ class QwenTTSService:
 
         self._write_metadata(
             output_run_dir=output_run_dir,
+            mode=MODE_CLONE,
             model_id=self.model_id,
             ref_audio_path=ref_audio_path,
             ref_text=ref_text,
             language=language,
             emotion_instruction=emotion_instruction,
+            items=items,
+        )
+        return GenerationResult(output_dir=str(output_run_dir), items=items)
+
+    def generate_voice_design(
+        self,
+        *,
+        texts: list[str],
+        language: str,
+        emotion_instruction: str,
+    ) -> GenerationResult:
+        clean_texts = [line.strip() for line in texts if line.strip()]
+        instruction = emotion_instruction.strip()
+        if not clean_texts:
+            raise ValueError("At least one target text line is required.")
+        if not instruction:
+            raise ValueError("Emotion/style instruction is required for voice design mode.")
+
+        model = self._load_voice_design_model()
+        output_run_dir = self._create_output_run_dir()
+        languages = self._languages_for_batch(language, len(clean_texts))
+        target_text: str | list[str] = clean_texts[0] if len(clean_texts) == 1 else clean_texts
+        instruct: str | list[str] = instruction if len(clean_texts) == 1 else [instruction] * len(clean_texts)
+
+        wavs, sample_rate = model.generate_voice_design(
+            text=target_text,
+            language=languages,
+            instruct=instruct,
+        )
+
+        items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
+        self._write_metadata(
+            output_run_dir=output_run_dir,
+            mode=MODE_VOICE_DESIGN,
+            model_id=self.voice_design_model_id,
+            ref_audio_path=None,
+            ref_text="",
+            language=language,
+            emotion_instruction=instruction,
+            items=items,
+        )
+        return GenerationResult(output_dir=str(output_run_dir), items=items)
+
+    def generate_voice_design_then_clone(
+        self,
+        *,
+        texts: list[str],
+        language: str,
+        emotion_instruction: str,
+        design_ref_text: str,
+    ) -> GenerationResult:
+        clean_texts = [line.strip() for line in texts if line.strip()]
+        instruction = emotion_instruction.strip()
+        clean_ref_text = design_ref_text.strip()
+        if not clean_texts:
+            raise ValueError("At least one target text line is required.")
+        if not instruction:
+            raise ValueError("Emotion/style instruction is required for voice design then clone mode.")
+        if not clean_ref_text:
+            raise ValueError("Design reference text is required for voice design then clone mode.")
+
+        output_run_dir = self._create_output_run_dir()
+        design_model = self._load_voice_design_model()
+        clone_model = self._load_clone_model()
+
+        # Generate one style reference clip with the real instruct API, then reuse it as clone prompt.
+        ref_wavs, ref_sample_rate = design_model.generate_voice_design(
+            text=clean_ref_text,
+            language=language,
+            instruct=instruction,
+        )
+        design_ref_audio_path = output_run_dir / "design_reference.wav"
+        sf.write(str(design_ref_audio_path), ref_wavs[0], ref_sample_rate)
+
+        voice_clone_prompt = clone_model.create_voice_clone_prompt(
+            ref_audio=(ref_wavs[0], ref_sample_rate),
+            ref_text=clean_ref_text,
+        )
+        languages = self._languages_for_batch(language, len(clean_texts))
+        target_text: str | list[str] = clean_texts[0] if len(clean_texts) == 1 else clean_texts
+        wavs, sample_rate = clone_model.generate_voice_clone(
+            text=target_text,
+            language=languages,
+            voice_clone_prompt=voice_clone_prompt,
+        )
+
+        items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
+        self._write_metadata(
+            output_run_dir=output_run_dir,
+            mode=MODE_VOICE_DESIGN_THEN_CLONE,
+            model_id=f"{self.voice_design_model_id} -> {self.model_id}",
+            ref_audio_path=design_ref_audio_path,
+            ref_text=clean_ref_text,
+            language=language,
+            emotion_instruction=instruction,
             items=items,
         )
         return GenerationResult(output_dir=str(output_run_dir), items=items)
@@ -146,21 +257,35 @@ class QwenTTSService:
         return normalized if count == 1 else [normalized] * count
 
     @staticmethod
-    def _apply_experimental_emotion(text: str, emotion_instruction: str | None) -> str:
-        instruction = (emotion_instruction or "").strip()
-        if not instruction:
-            return text
-
-        # Qwen3-TTS Base voice clone docs do not define an instruct argument.
-        # This conservative prefix lets users try style cues without claiming API support.
-        return f"{instruction}\n{text}"
+    def _write_audio_items(
+        output_run_dir: Path,
+        clean_texts: list[str],
+        wavs: list[Any],
+        sample_rate: int,
+    ) -> list[GeneratedAudio]:
+        items: list[GeneratedAudio] = []
+        for index, (original_text, wav) in enumerate(zip(clean_texts, wavs), start=1):
+            filename = f"line_{index:03}.wav"
+            audio_path = output_run_dir / filename
+            sf.write(str(audio_path), wav, sample_rate)
+            items.append(
+                GeneratedAudio(
+                    index=index,
+                    text=original_text,
+                    filename=filename,
+                    path=str(audio_path),
+                    url=f"/outputs/{output_run_dir.name}/{filename}",
+                )
+            )
+        return items
 
     @staticmethod
     def _write_metadata(
         *,
         output_run_dir: Path,
+        mode: str,
         model_id: str,
-        ref_audio_path: Path,
+        ref_audio_path: Path | None,
         ref_text: str,
         language: str,
         emotion_instruction: str | None,
@@ -168,12 +293,12 @@ class QwenTTSService:
     ) -> None:
         metadata = {
             "created_at": datetime.now().isoformat(timespec="seconds"),
+            "mode": mode,
             "model": model_id,
-            "reference_audio": str(ref_audio_path),
+            "reference_audio": str(ref_audio_path) if ref_audio_path else "",
             "reference_text": ref_text,
             "language": language,
             "emotion_instruction": emotion_instruction or "",
-            "emotion_mode": "experimental_prompt_prefix",
             "items": [item.__dict__ for item in items],
         }
         metadata_path = output_run_dir / "metadata.json"
@@ -185,7 +310,3 @@ class QwenTTSService:
 
 def split_text_lines(texts: str) -> list[str]:
     return [line.strip() for line in texts.splitlines() if line.strip()]
-
-
-def supports_instruct_parameter(model_method: Any) -> bool:
-    return "instruct" in inspect.signature(model_method).parameters

@@ -1,7 +1,18 @@
 const form = document.querySelector("#tts-form");
+const modeSelect = document.querySelector("#mode-select");
+const modeNote = document.querySelector("#mode-note");
 const submitButton = document.querySelector("#submit-button");
 const message = document.querySelector("#message");
 const resultList = document.querySelector("#result-list");
+
+const modeNotes = {
+  clone: "使用 Base 模型克隆上传音频。语气来自参考音频本身，不会把情绪描述拼进正文。",
+  voice_design: "使用 VoiceDesign 模型，情绪/语气描述会作为 instruct 参数生效。",
+  voice_design_then_clone: "先设计一段风格参考音频，再复用为 clone prompt 批量生成目标文本。",
+};
+
+modeSelect.addEventListener("change", updateModeUI);
+updateModeUI();
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -53,3 +64,20 @@ function renderResult(item) {
   return wrapper;
 }
 
+function updateModeUI() {
+  const mode = modeSelect.value;
+  modeNote.textContent = modeNotes[mode];
+
+  for (const group of document.querySelectorAll("[data-mode-group]")) {
+    const modes = group.dataset.modeGroup.split(" ");
+    const visible =
+      modes.includes(mode) ||
+      (group.dataset.modeGroup === "design" && mode !== "clone");
+    group.hidden = !visible;
+  }
+
+  for (const field of form.querySelectorAll("[data-required-when]")) {
+    const modes = field.dataset.requiredWhen.split(" ");
+    field.required = modes.includes(mode);
+  }
+}

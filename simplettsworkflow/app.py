@@ -11,7 +11,13 @@ from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
 from .settings import BASE_DIR, OUTPUT_DIR, UPLOAD_DIR
-from .tts import QwenTTSService, split_text_lines
+from .tts import (
+    MODE_CLONE,
+    MODE_VOICE_DESIGN,
+    MODE_VOICE_DESIGN_THEN_CLONE,
+    QwenTTSService,
+    split_text_lines,
+)
 
 
 app = FastAPI(title="Simple Qwen3-TTS Workflow")
@@ -31,30 +37,48 @@ async def index(request: Request):
 
 @app.post("/api/generate")
 async def generate(
-    ref_audio: UploadFile = File(...),
+    ref_audio: UploadFile | None = File(None),
+    mode: str = Form(MODE_CLONE),
     ref_text: str = Form(""),
     texts: str = Form(""),
     language: str = Form("Auto"),
     emotion_instruction: str = Form(""),
+    design_ref_text: str = Form(""),
 ):
-    if not ref_audio.filename:
-        raise HTTPException(status_code=400, detail="Reference audio is required.")
-    if not ref_text.strip():
-        raise HTTPException(status_code=400, detail="Reference text is required.")
-
     lines = split_text_lines(texts)
     if not lines:
         raise HTTPException(status_code=400, detail="At least one target text line is required.")
 
-    ref_audio_path = _save_upload(ref_audio)
     try:
-        result = service.generate_voice_clone(
-            ref_audio_path=ref_audio_path,
-            ref_text=ref_text,
-            texts=lines,
-            language=language,
-            emotion_instruction=emotion_instruction,
-        )
+        if mode == MODE_CLONE:
+            if ref_audio is None or not ref_audio.filename:
+                raise HTTPException(status_code=400, detail="Reference audio is required.")
+            if not ref_text.strip():
+                raise HTTPException(status_code=400, detail="Reference text is required.")
+            result = service.generate_voice_clone(
+                ref_audio_path=_save_upload(ref_audio),
+                ref_text=ref_text,
+                texts=lines,
+                language=language,
+                emotion_instruction=emotion_instruction,
+            )
+        elif mode == MODE_VOICE_DESIGN:
+            result = service.generate_voice_design(
+                texts=lines,
+                language=language,
+                emotion_instruction=emotion_instruction,
+            )
+        elif mode == MODE_VOICE_DESIGN_THEN_CLONE:
+            result = service.generate_voice_design_then_clone(
+                texts=lines,
+                language=language,
+                emotion_instruction=emotion_instruction,
+                design_ref_text=design_ref_text,
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported generation mode: {mode}")
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

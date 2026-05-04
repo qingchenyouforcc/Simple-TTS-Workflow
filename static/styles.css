@@ -87,6 +87,21 @@ textarea {
   font-size: 1.1rem;
 }
 
+.panel h2:not(:first-child) {
+  margin-top: 22px;
+}
+
+.note {
+  margin: 12px 0 0;
+  color: #657184;
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+[hidden] {
+  display: none !important;
+}
+
 label {
   display: grid;
   gap: 8px;
@@ -222,4 +237,3 @@ audio {
     width: fit-content;
   }
 }
-

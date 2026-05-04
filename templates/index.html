@@ -11,27 +11,61 @@
       <section class="intro">
         <div>
           <h1>Simple Qwen3-TTS Workflow</h1>
-          <p>上传参考音频和对应文本，再输入一行或多行目标文本，本地生成克隆语音。</p>
+          <p>上传参考音频克隆声音，或使用 VoiceDesign 用自然语言控制语气。</p>
         </div>
-        <span class="status">Qwen3-TTS 1.7B Base</span>
+        <span class="status">Qwen3-TTS 1.7B</span>
       </section>
 
       <form id="tts-form" class="workspace">
         <section class="panel">
-          <h2>参考素材</h2>
+          <h2>生成模式</h2>
           <label>
+            <span>模式</span>
+            <select id="mode-select" name="mode">
+              <option value="clone" selected>克隆参考音频</option>
+              <option value="voice_design">语气设计</option>
+              <option value="voice_design_then_clone">设计后复用</option>
+            </select>
+          </label>
+          <p id="mode-note" class="note"></p>
+
+          <div data-mode-group="clone">
+            <h2>参考素材</h2>
+            <label>
             <span>参考音频</span>
-            <input name="ref_audio" type="file" accept="audio/*" required />
-          </label>
-          <label>
-            <span>参考文本</span>
-            <textarea
-              name="ref_text"
-              rows="5"
-              placeholder="输入参考音频中实际说出的内容"
-              required
-            ></textarea>
-          </label>
+              <input name="ref_audio" type="file" accept="audio/*" data-required-when="clone" />
+            </label>
+            <label>
+              <span>参考文本</span>
+              <textarea
+                name="ref_text"
+                rows="5"
+                placeholder="输入参考音频中实际说出的内容"
+                data-required-when="clone"
+              ></textarea>
+            </label>
+          </div>
+
+          <div data-mode-group="design">
+            <label>
+              <span>情绪/语气描述</span>
+              <textarea
+                name="emotion_instruction"
+                rows="5"
+                placeholder="例如：用稍微伤感、放慢语速、轻声克制的语气说"
+                data-required-when="voice_design voice_design_then_clone"
+              ></textarea>
+            </label>
+            <label data-mode-group="voice_design_then_clone">
+              <span>设计参考文本</span>
+              <textarea
+                name="design_ref_text"
+                rows="4"
+                placeholder="这段文本会先用语气描述生成参考音频，再复用它生成下面的目标文本"
+                data-required-when="voice_design_then_clone"
+              >今天的天气有点安静，我想用这样的声音慢慢说完这段话。</textarea>
+            </label>
+          </div>
         </section>
 
         <section class="panel">
@@ -62,14 +96,6 @@
                 <option value="Italian">Italian</option>
               </select>
             </label>
-            <label>
-              <span>情绪/语气（实验性）</span>
-              <input
-                name="emotion_instruction"
-                type="text"
-                placeholder="例如：用开心、放松的语气说"
-              />
-            </label>
           </div>
           <button id="submit-button" type="submit">开始生成</button>
         </section>
@@ -86,4 +112,3 @@
     <script src="/static/app.js"></script>
   </body>
 </html>
-
