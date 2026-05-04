@@ -10,7 +10,8 @@ dependencies = [
     "python-multipart>=0.0.12",
     "qwen-tts>=0.1.0",
     "soundfile>=0.12.1",
-    "torch>=2.4.0",
+    "torch==2.10.0",
+    "torchaudio==2.10.0",
     "uvicorn[standard]>=0.30.0",
 ]
 
@@ -30,3 +31,12 @@ include = ["simplettsworkflow*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+from importlib.util import find_spec
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -55,7 +56,10 @@ class QwenTTSService:
                     "dtype": torch.bfloat16,
                 }
             )
-            if os.getenv("QWEN_TTS_FLASH_ATTENTION", "1") != "0":
+            if (
+                os.getenv("QWEN_TTS_FLASH_ATTENTION", "1") != "0"
+                and find_spec("flash_attn") is not None
+            ):
                 kwargs["attn_implementation"] = "flash_attention_2"
         else:
             kwargs.update({"device_map": "cpu", "dtype": torch.float32})
