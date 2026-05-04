@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Simple Qwen3-TTS Workflow</title>
+    <title>Simple TTS Workflow</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <main class="shell">
       <section class="intro">
         <div>
-          <h1>Simple Qwen3-TTS Workflow</h1>
+          <h1>Simple TTS Workflow</h1>
           <p>用 VoxCPM2 克隆音色并控制语气，或继续使用 Qwen3-TTS 工作流。</p>
         </div>
         <span class="status">VoxCPM2 + Qwen3-TTS</span>
@@ -38,8 +38,15 @@
 
           <div data-mode-group="reference_audio">
             <h2>参考素材</h2>
+            <label data-mode-group="voice_preset">
+              <span>语音预设</span>
+              <select id="voice-preset-select" name="voice_preset">
+                <option value="">不使用预设</option>
+              </select>
+            </label>
+            <p id="voice-preset-note" class="note" data-mode-group="voice_preset"></p>
             <label>
-            <span>参考音频</span>
+              <span>参考音频</span>
               <input
                 name="ref_audio"
                 type="file"

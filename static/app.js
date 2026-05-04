@@ -1,9 +1,13 @@
 const form = document.querySelector("#tts-form");
 const modeSelect = document.querySelector("#mode-select");
 const modeNote = document.querySelector("#mode-note");
+const voicePresetSelect = document.querySelector("#voice-preset-select");
+const voicePresetNote = document.querySelector("#voice-preset-note");
 const submitButton = document.querySelector("#submit-button");
 const message = document.querySelector("#message");
 const resultList = document.querySelector("#result-list");
+const cloneModes = ["vox_controllable_clone", "vox_hifi_clone", "clone"];
+let voicePresets = [];
 
 const modeNotes = {
   vox_controllable_clone: "VoxCPM2 默认模式：上传参考音频克隆音色，情绪/语气描述会控制风格。",
@@ -16,6 +20,7 @@ const modeNotes = {
 
 const visibility = {
   reference_audio: ["vox_controllable_clone", "vox_hifi_clone", "clone"],
+  voice_preset: cloneModes,
   reference_text: ["vox_hifi_clone", "clone"],
   style: ["vox_controllable_clone", "vox_design", "voice_design", "voice_design_then_clone"],
   voice_design_then_clone: ["voice_design_then_clone"],
@@ -23,6 +28,8 @@ const visibility = {
 };
 
 modeSelect.addEventListener("change", updateModeUI);
+voicePresetSelect.addEventListener("change", updateModeUI);
+loadVoicePresets();
 updateModeUI();
 
 form.addEventListener("submit", async (event) => {
@@ -77,6 +84,7 @@ function renderResult(item) {
 
 function updateModeUI() {
   const mode = modeSelect.value;
+  const selectedPreset = cloneModes.includes(mode) ? getSelectedVoicePreset() : null;
   modeNote.textContent = modeNotes[mode];
 
   for (const group of document.querySelectorAll("[data-mode-group]")) {
@@ -86,7 +94,19 @@ function updateModeUI() {
 
   for (const field of form.querySelectorAll("[data-required-when]")) {
     const modes = field.dataset.requiredWhen.split(" ");
-    field.required = modes.includes(mode);
+    field.required = modes.includes(mode) && !selectedPreset;
+  }
+
+  voicePresetSelect.disabled = !cloneModes.includes(mode) || voicePresets.length === 0;
+  if (voicePresets.length === 0) {
+    voicePresetNote.textContent = "role 文件夹中没有可用预设，将使用上传参考素材。";
+  } else if (selectedPreset) {
+    voicePresetNote.textContent = `使用预设音频：${selectedPreset.audio_filename}`;
+    if (form.elements.ref_text && cloneModes.includes(mode)) {
+      form.elements.ref_text.value = selectedPreset.ref_text;
+    }
+  } else {
+    voicePresetNote.textContent = "可选择 role 文件夹中的预设，或继续上传参考音频。";
   }
 
   const styleField = form.elements.emotion_instruction;
@@ -94,4 +114,37 @@ function updateModeUI() {
   if (styleField.disabled) {
     styleField.value = "";
   }
+}
+
+async function loadVoicePresets() {
+  try {
+    const response = await fetch("/api/voice-presets");
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "无法加载语音预设");
+    }
+    voicePresets = payload.presets || [];
+    renderVoicePresetOptions();
+  } catch (error) {
+    voicePresets = [];
+    voicePresetNote.textContent = error.message;
+  } finally {
+    updateModeUI();
+  }
+}
+
+function renderVoicePresetOptions() {
+  const currentValue = voicePresetSelect.value;
+  voicePresetSelect.replaceChildren(new Option("不使用预设", ""));
+  for (const preset of voicePresets) {
+    voicePresetSelect.appendChild(new Option(preset.name, preset.name));
+  }
+  if (voicePresets.some((preset) => preset.name === currentValue)) {
+    voicePresetSelect.value = currentValue;
+  }
+}
+
+function getSelectedVoicePreset() {
+  const selectedName = voicePresetSelect.value;
+  return voicePresets.find((preset) => preset.name === selectedName) || null;
 }

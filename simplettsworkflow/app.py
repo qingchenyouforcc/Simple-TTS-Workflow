@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-from .settings import BASE_DIR, OUTPUT_DIR, UPLOAD_DIR
+from .settings import BASE_DIR, OUTPUT_DIR, ROLE_DIR, UPLOAD_DIR
 from .tts import (
     MODE_CLONE,
     MODE_VOX_CONTROLLABLE_CLONE,
@@ -22,6 +22,7 @@ from .tts import (
     QwenTTSService,
     split_text_lines,
 )
+from .voice_presets import VoicePreset, find_voice_preset, load_voice_presets
 
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ service = QwenTTSService()
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+ROLE_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
 
@@ -40,10 +42,16 @@ async def index(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
+@app.get("/api/voice-presets")
+async def voice_presets():
+    return JSONResponse({"presets": [preset.to_response() for preset in load_voice_presets(ROLE_DIR)]})
+
+
 @app.post("/api/generate")
 async def generate(
     ref_audio: UploadFile | None = File(None),
     mode: str = Form(MODE_VOX_CONTROLLABLE_CLONE),
+    voice_preset: str = Form(""),
     ref_text: str = Form(""),
     texts: str = Form(""),
     language: str = Form("Auto"),
@@ -72,10 +80,11 @@ async def generate(
     )
 
     try:
+        preset = None
+        if mode in {MODE_VOX_CONTROLLABLE_CLONE, MODE_VOX_HIFI_CLONE, MODE_CLONE}:
+            preset = _get_requested_preset(voice_preset)
         if mode == MODE_VOX_CONTROLLABLE_CLONE:
-            if ref_audio is None or not ref_audio.filename:
-                raise HTTPException(status_code=400, detail="Reference audio is required.")
-            ref_audio_path = _save_upload(ref_audio)
+            ref_audio_path, _ = _resolve_reference_material(ref_audio, ref_text, preset, require_text=False)
             result = service.generate_vox_controllable_clone(
                 ref_audio_path=ref_audio_path,
                 texts=lines,
@@ -95,14 +104,10 @@ async def generate(
                 denoise=denoise,
             )
         elif mode == MODE_VOX_HIFI_CLONE:
-            if ref_audio is None or not ref_audio.filename:
-                raise HTTPException(status_code=400, detail="Reference audio is required.")
-            if not ref_text.strip():
-                raise HTTPException(status_code=400, detail="Reference text is required.")
-            ref_audio_path = _save_upload(ref_audio)
+            ref_audio_path, resolved_ref_text = _resolve_reference_material(ref_audio, ref_text, preset)
             result = service.generate_vox_hifi_clone(
                 ref_audio_path=ref_audio_path,
-                ref_text=ref_text,
+                ref_text=resolved_ref_text,
                 texts=lines,
                 style_instruction=emotion_instruction,
                 cfg_value=cfg_value,
@@ -111,14 +116,10 @@ async def generate(
                 denoise=denoise,
             )
         elif mode == MODE_CLONE:
-            if ref_audio is None or not ref_audio.filename:
-                raise HTTPException(status_code=400, detail="Reference audio is required.")
-            if not ref_text.strip():
-                raise HTTPException(status_code=400, detail="Reference text is required.")
-            ref_audio_path = _save_upload(ref_audio)
+            ref_audio_path, resolved_ref_text = _resolve_reference_material(ref_audio, ref_text, preset)
             result = service.generate_voice_clone(
                 ref_audio_path=ref_audio_path,
-                ref_text=ref_text,
+                ref_text=resolved_ref_text,
                 texts=lines,
                 language=language,
                 emotion_instruction=emotion_instruction,
@@ -159,6 +160,34 @@ async def generate(
             "items": [item.__dict__ for item in result.items],
         }
     )
+
+
+def _get_requested_preset(voice_preset: str) -> VoicePreset | None:
+    preset_name = voice_preset.strip()
+    if not preset_name:
+        return None
+    preset = find_voice_preset(ROLE_DIR, preset_name)
+    if preset is None:
+        raise HTTPException(status_code=400, detail=f"Unknown voice preset: {preset_name}")
+    return preset
+
+
+def _resolve_reference_material(
+    ref_audio: UploadFile | None,
+    ref_text: str,
+    preset: VoicePreset | None,
+    *,
+    require_text: bool = True,
+) -> tuple[Path, str]:
+    if preset is not None:
+        return preset.audio_path, preset.ref_text
+
+    if ref_audio is None or not ref_audio.filename:
+        raise HTTPException(status_code=400, detail="Reference audio is required.")
+    resolved_ref_text = ref_text.strip()
+    if require_text and not resolved_ref_text:
+        raise HTTPException(status_code=400, detail="Reference text is required.")
+    return _save_upload(ref_audio), resolved_ref_text
 
 
 def _save_upload(upload: UploadFile) -> Path:

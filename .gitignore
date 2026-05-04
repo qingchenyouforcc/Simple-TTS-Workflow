@@ -19,3 +19,9 @@ Qwen3-TTS-*/
 # Local configuration
 .env
 .env.*
+
+# Local voice presets
+role/*
+!role/.gitkeep
+!role/示例预设/
+!role/示例预设/**

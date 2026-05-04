@@ -41,6 +41,29 @@ uv run python main.py
 3. 根据模式填写参考音频、参考文本或情绪/语气描述。
 4. 生成结果默认保存在 `output/YYYYMMDD-HHMMSS/`。
 
+## 语音 Clone 预设
+
+克隆模式可以从 `role/` 文件夹读取语音预设。每个预设单独放在一个子文件夹里，配置文件和参考音频放在同一目录内：
+
+```text
+role/
+  alice/
+    preset.json
+    alice.mp3
+```
+
+配置文件格式：
+
+```json
+{
+  "name": "Alice",
+  "reference": "alice.mp3",
+  "reference_text": "这段话需要和参考音频中实际说出的内容一致。"
+}
+```
+
+`reference` 支持 `.wav`、`.mp3`、`.flac`、`.m4a` 和 `.ogg`，路径相对当前预设文件夹解析。启动页面后，“可控克隆”“Hi-Fi 克隆（高级）”和“参考音频克隆”模式会显示“语音预设”下拉框。选择预设后，程序会优先使用预设音频和参考文本；如果不选预设，仍然使用上传参考音频的原流程。
+
 ## 生成模式
 
 ### VoxCPM2
