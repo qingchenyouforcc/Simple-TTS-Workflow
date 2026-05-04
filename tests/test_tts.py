@@ -189,3 +189,23 @@ def test_vox_hifi_clone_uses_prompt_text_without_style_prefix(monkeypatch, tmp_p
     assert call["prompt_wav_path"] == str(tmp_path / "voice.wav")
     assert call["prompt_text"] == "exact transcript"
     assert call["reference_wav_path"] == str(tmp_path / "voice.wav")
+
+
+def test_load_voxcpm_model_does_not_pass_device(monkeypatch, tmp_path: Path) -> None:
+    calls = []
+
+    class FakeVoxCPM:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            calls.append((args, kwargs))
+            return FakeVoxModel()
+
+    monkeypatch.setenv("VOXCPM_DEVICE", "cuda:0")
+    monkeypatch.setattr("voxcpm.VoxCPM", FakeVoxCPM)
+    service = QwenTTSService(output_dir=tmp_path, voxcpm_model_id="local-vox")
+
+    model = service._load_voxcpm_model()
+
+    assert isinstance(model, FakeVoxModel)
+    assert calls[0][0] == ("local-vox",)
+    assert "device" not in calls[0][1]

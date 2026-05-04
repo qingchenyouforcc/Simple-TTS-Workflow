@@ -107,20 +107,19 @@ class QwenTTSService:
         from voxcpm import VoxCPM
 
         load_denoiser = _env_bool("VOXCPM_LOAD_DENOISER", False)
-        device = os.getenv("VOXCPM_DEVICE", "auto")
         optimize = _env_bool("VOXCPM_OPTIMIZE", True)
         logger.info(
-            "Loading VoxCPM2 model: model=%s load_denoiser=%s device=%s optimize=%s",
+            "Loading VoxCPM2 model: model=%s load_denoiser=%s optimize=%s",
             self.voxcpm_model_id,
             load_denoiser,
-            device,
             optimize,
         )
+        if os.getenv("VOXCPM_DEVICE"):
+            logger.warning("VOXCPM_DEVICE is set but voxcpm 2.0.2 does not accept a device argument; ignoring it.")
         # VoxCPM2 is loaded only for Vox modes so Qwen workflows stay lightweight.
         self._voxcpm_model = VoxCPM.from_pretrained(
             self.voxcpm_model_id,
             load_denoiser=load_denoiser,
-            device=device,
             optimize=optimize,
         )
         logger.info("VoxCPM2 model loaded: model=%s", self.voxcpm_model_id)
