@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Simple Qwen3-TTS Workflow</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="intro">
+        <div>
+          <h1>Simple Qwen3-TTS Workflow</h1>
+          <p>上传参考音频和对应文本，再输入一行或多行目标文本，本地生成克隆语音。</p>
+        </div>
+        <span class="status">Qwen3-TTS 1.7B Base</span>
+      </section>
+
+      <form id="tts-form" class="workspace">
+        <section class="panel">
+          <h2>参考素材</h2>
+          <label>
+            <span>参考音频</span>
+            <input name="ref_audio" type="file" accept="audio/*" required />
+          </label>
+          <label>
+            <span>参考文本</span>
+            <textarea
+              name="ref_text"
+              rows="5"
+              placeholder="输入参考音频中实际说出的内容"
+              required
+            ></textarea>
+          </label>
+        </section>
+
+        <section class="panel">
+          <h2>生成文本</h2>
+          <label>
+            <span>目标文本（一行生成一个音频）</span>
+            <textarea
+              name="texts"
+              rows="9"
+              placeholder="第一句要生成的内容&#10;第二句要生成的内容"
+              required
+            ></textarea>
+          </label>
+          <div class="field-row">
+            <label>
+              <span>语言</span>
+              <select name="language">
+                <option value="Auto" selected>Auto</option>
+                <option value="Chinese">Chinese</option>
+                <option value="English">English</option>
+                <option value="Japanese">Japanese</option>
+                <option value="Korean">Korean</option>
+                <option value="German">German</option>
+                <option value="French">French</option>
+                <option value="Russian">Russian</option>
+                <option value="Portuguese">Portuguese</option>
+                <option value="Spanish">Spanish</option>
+                <option value="Italian">Italian</option>
+              </select>
+            </label>
+            <label>
+              <span>情绪/语气（实验性）</span>
+              <input
+                name="emotion_instruction"
+                type="text"
+                placeholder="例如：用开心、放松的语气说"
+              />
+            </label>
+          </div>
+          <button id="submit-button" type="submit">开始生成</button>
+        </section>
+      </form>
+
+      <section class="results" aria-live="polite">
+        <div class="results-header">
+          <h2>生成结果</h2>
+          <p id="message">还没有生成内容。</p>
+        </div>
+        <div id="result-list" class="result-list"></div>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+
