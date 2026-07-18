@@ -4,6 +4,8 @@
 
 ## 环境
 
+Qwen3-TTS 会先把完整模型下载到 Hugging Face 本地缓存，再从本地快照加载。这样 Transformers 在检查可选的 custom generation 代码时只访问本地文件，不会在模型加载阶段反复发送 HEAD 请求。
+
 - Python 3.12
 - 建议使用 NVIDIA GPU。CPU 可以尝试运行，但 1.7B 模型会很慢。
 - 首次运行会下载所选模型权重。VoxCPM2 默认模型是 `openbmb/VoxCPM2`，Qwen3-TTS 默认模型是 `Qwen/Qwen3-TTS-12Hz-1.7B-Base`。
@@ -81,6 +83,26 @@ role/
 注意：不要在克隆模式里把“用伤感的语气说”写到目标文本前面。Base voice clone 会把它当正文朗读；本程序已经避免把语气描述拼进 clone 文本。
 
 ## 配置
+
+下载相关配置：
+
+- <code>HF_ENDPOINT</code>：Hugging Face 下载端点，默认 <code>https://hf-mirror.com</code>；如需使用官方源，设置为 <code>https://huggingface.co</code>
+- <code>SIMPLETTS_HF_FALLBACK_ENDPOINT</code>：备用下载端点；默认镜像不可用时自动切换到 <code>https://huggingface.co</code>。显式设置其他 <code>HF_ENDPOINT</code> 时默认不自动切源
+- <code>HF_HUB_ETAG_TIMEOUT</code>：仓库元数据/HEAD 请求超时秒数，默认 <code>60</code>
+- <code>HF_HUB_DOWNLOAD_TIMEOUT</code>：单次文件下载网络超时秒数，默认 <code>300</code>
+- <code>SIMPLETTS_HF_MAX_WORKERS</code>：模型快照并发下载数，默认 <code>2</code>；较低并发可减少镜像/CDN 元数据请求偶发失败
+- <code>SIMPLETTS_HF_RETRIES</code>：完整快照下载失败后的尝试次数，默认 <code>3</code>；重试会继续复用已经下载的缓存
+- <code>HF_HUB_OFFLINE=1</code>：完全离线，只使用已经下载完整的本地缓存
+
+如果当前网络无法访问默认镜像，可以在启动前切换到官方源：
+
+    $env:HF_ENDPOINT = "https://huggingface.co"
+    uv run python main.py
+
+模型第一次下载成功后，后续运行会直接复用 Hugging Face 缓存。若要强制禁止所有联网检查：
+
+    $env:HF_HUB_OFFLINE = "1"
+    uv run python main.py
 
 - `VOXCPM_MODEL`：VoxCPM2 模型 ID 或本地模型目录，默认 `openbmb/VoxCPM2`
 - `VOXCPM_DEVICE`：VoxCPM2 运行设备，默认 `auto`

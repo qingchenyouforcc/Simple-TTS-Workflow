@@ -209,3 +209,28 @@ def test_load_voxcpm_model_does_not_pass_device(monkeypatch, tmp_path: Path) -> 
     assert isinstance(model, FakeVoxModel)
     assert calls[0][0] == ("local-vox",)
     assert "device" not in calls[0][1]
+
+
+def test_load_qwen_model_uses_downloaded_snapshot(monkeypatch, tmp_path: Path) -> None:
+    calls = []
+    fake_model = object()
+
+    class FakeQwen3TTSModel:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            calls.append((args, kwargs))
+            return fake_model
+
+    monkeypatch.setenv("QWEN_TTS_DEVICE", "cpu")
+    monkeypatch.setattr(
+        "simplettsworkflow.tts.resolve_huggingface_model",
+        lambda model_id: str(tmp_path / "cached-snapshot"),
+    )
+    monkeypatch.setattr("qwen_tts.Qwen3TTSModel", FakeQwen3TTSModel)
+    service = QwenTTSService(output_dir=tmp_path, model_id="owner/model")
+
+    model = service._load_clone_model()
+
+    assert model is fake_model
+    assert calls[0][0] == (str(tmp_path / "cached-snapshot"),)
+    assert calls[0][1]["device_map"] == "cpu"

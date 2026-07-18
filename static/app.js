@@ -1,21 +1,41 @@
 const form = document.querySelector("#tts-form");
-const modeSelect = document.querySelector("#mode-select");
+const modeInput = document.querySelector("#mode-select");
+const modeCards = Array.from(document.querySelectorAll("[data-mode-value]"));
 const modeNote = document.querySelector("#mode-note");
 const voicePresetSelect = document.querySelector("#voice-preset-select");
 const voicePresetNote = document.querySelector("#voice-preset-note");
+const refAudioInput = document.querySelector("#ref-audio-input");
+const uploadField = document.querySelector(".upload-field");
+const fileName = document.querySelector("#file-name");
+const targetTexts = document.querySelector("#target-texts");
+const lineCount = document.querySelector("#line-count");
+const charCount = document.querySelector("#char-count");
+const readiness = document.querySelector(".generation-readiness");
+const readinessText = document.querySelector("#readiness-text");
 const submitButton = document.querySelector("#submit-button");
+const buttonLabel = submitButton.querySelector(".button-label");
 const message = document.querySelector("#message");
+const resultsPanel = document.querySelector("#results");
+const emptyResults = document.querySelector("#empty-results");
 const resultList = document.querySelector("#result-list");
+const resultStatus = document.querySelector("#result-status");
+const clearResults = document.querySelector("#clear-results");
+const themeToggle = document.querySelector("#theme-toggle");
+const toast = document.querySelector("#toast");
 const cloneModes = ["vox_controllable_clone", "vox_hifi_clone", "clone"];
+
 let voicePresets = [];
+let activePresetName = "";
+let manualRefText = "";
+let toastTimer;
 
 const modeNotes = {
-  vox_controllable_clone: "VoxCPM2 默认模式：上传参考音频克隆音色，情绪/语气描述会控制风格。",
-  vox_design: "VoxCPM2 语音设计：不需要参考音频，用语气描述直接生成新声音。",
-  vox_hifi_clone: "VoxCPM2 Hi-Fi 克隆：需要参考文本以提高相似度；此模式会忽略语气描述。",
-  clone: "Qwen3-TTS Base：克隆上传音频。语气来自参考音频本身，不支持独立语气控制。",
-  voice_design: "Qwen3-TTS VoiceDesign：情绪/语气描述会作为 instruct 参数生效。",
-  voice_design_then_clone: "Qwen3-TTS：先设计风格参考音频，再复用为 clone prompt 批量生成目标文本。",
+  vox_controllable_clone: "推荐入门使用。上传一段参考音频保留音色，再用自然语言控制情绪、节奏与表达方式。",
+  vox_design: "不需要参考音频。描述你想要的声音与语气，VoxCPM2 会直接生成一个新的表达。",
+  vox_hifi_clone: "适合更看重音色相似度的场景。需要参考音频及逐字文本，此模式不使用语气描述。",
+  clone: "使用 Qwen3-TTS Base 忠实克隆参考音频。表达方式主要来自参考音频本身。",
+  voice_design: "使用 Qwen3-TTS VoiceDesign，根据自然语言指令直接设计音色、情绪与说话方式。",
+  voice_design_then_clone: "先生成一段符合描述的风格参考音频，再把它复用到多行文本，保持批量输出一致。",
 };
 
 const visibility = {
@@ -27,65 +47,177 @@ const visibility = {
   vox_params: ["vox_controllable_clone", "vox_design", "vox_hifi_clone"],
 };
 
-modeSelect.addEventListener("change", updateModeUI);
-voicePresetSelect.addEventListener("change", updateModeUI);
+initializeTheme();
+bindEvents();
 loadVoicePresets();
 updateModeUI();
+updateTextStats();
 
-form.addEventListener("submit", async (event) => {
+function bindEvents() {
+  for (const card of modeCards) {
+    card.addEventListener("click", () => {
+      modeInput.value = card.dataset.modeValue;
+      updateModeUI();
+    });
+  }
+
+  voicePresetSelect.addEventListener("change", applyPresetSelection);
+  refAudioInput.addEventListener("change", updateUploadState);
+  targetTexts.addEventListener("input", () => {
+    updateTextStats();
+    clearInvalidState(targetTexts);
+  });
+
+  for (const field of form.querySelectorAll("input, select, textarea")) {
+    field.addEventListener("input", () => {
+      clearInvalidState(field);
+      updateReadiness();
+    });
+  }
+
+  for (const chip of document.querySelectorAll("[data-style-prompt]")) {
+    chip.addEventListener("click", () => {
+      const styleField = form.elements.emotion_instruction;
+      styleField.value = chip.dataset.stylePrompt;
+      styleField.dispatchEvent(new Event("input", { bubbles: true }));
+      styleField.focus();
+    });
+  }
+
+  for (const eventName of ["dragenter", "dragover"]) {
+    uploadField.addEventListener(eventName, () => uploadField.classList.add("is-dragging"));
+  }
+  for (const eventName of ["dragleave", "drop"]) {
+    uploadField.addEventListener(eventName, () => uploadField.classList.remove("is-dragging"));
+  }
+
+  form.addEventListener("submit", handleSubmit);
+  clearResults.addEventListener("click", resetResults);
+  themeToggle.addEventListener("click", toggleTheme);
+}
+
+async function handleSubmit(event) {
   event.preventDefault();
-  submitButton.disabled = true;
-  submitButton.textContent = "生成中...";
-  message.textContent = "模型生成可能需要一些时间，请稍等。";
+  if (!validateForm()) {
+    return;
+  }
+
+  setLoading(true);
+  setResultState("loading", "正在生成");
+  message.className = "message";
+  message.textContent = "模型正在准备并生成音频。首次使用可能还需要下载权重，请保持页面开启。";
+  emptyResults.hidden = true;
   resultList.replaceChildren();
+  clearResults.hidden = true;
 
   try {
     const response = await fetch("/api/generate", {
       method: "POST",
       body: new FormData(form),
     });
-    const payload = await response.json();
+    const payload = await parseResponse(response);
     if (!response.ok) {
-      throw new Error(payload.detail || "生成失败");
+      throw new Error(payload.detail || "生成失败，请检查输入后重试。");
     }
 
-    message.textContent = `已生成 ${payload.items.length} 个音频，输出目录：${payload.output_dir}`;
-    for (const item of payload.items) {
-      resultList.appendChild(renderResult(item));
-    }
+    renderSuccessMessage(payload);
+    payload.items.forEach((item, index) => {
+      resultList.appendChild(renderResult(item, index));
+    });
+    setResultState("success", "生成完成");
+    clearResults.hidden = false;
+    showToast("已生成 " + payload.items.length + " 个音频");
+    resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
-    message.textContent = error.message;
+    message.className = "message is-error";
+    message.textContent = error instanceof Error ? error.message : "生成失败，请稍后重试。";
+    emptyResults.hidden = false;
+    setResultState("error", "生成失败");
   } finally {
-    submitButton.disabled = false;
-    submitButton.textContent = "开始生成";
+    setLoading(false);
   }
-});
+}
 
-function renderResult(item) {
+async function parseResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+  const body = await response.text();
+  return { detail: body || "服务器返回了无法识别的响应。" };
+}
+
+function renderSuccessMessage(payload) {
+  message.className = "message success-message";
+  const summary = document.createElement("span");
+  summary.textContent = "已生成 " + payload.items.length + " 个音频 · " + payload.output_dir;
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "inline-copy";
+  copyButton.textContent = "复制目录";
+  copyButton.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(payload.output_dir);
+      showToast("输出目录已复制");
+    } catch {
+      showToast("无法访问剪贴板，请手动复制目录");
+    }
+  });
+  message.replaceChildren(summary, copyButton);
+}
+
+function renderResult(item, animationIndex) {
   const wrapper = document.createElement("article");
   wrapper.className = "result-item";
+  wrapper.style.animationDelay = String(animationIndex * 55) + "ms";
 
   const details = document.createElement("div");
+  details.className = "result-details";
+  const index = document.createElement("span");
+  index.className = "result-index";
+  index.textContent = String(item.index).padStart(2, "0");
+
+  const copy = document.createElement("div");
+  copy.className = "result-copy";
   const title = document.createElement("strong");
-  title.textContent = `Line ${String(item.index).padStart(3, "0")}`;
+  title.textContent = item.filename || "音频 " + item.index;
   const text = document.createElement("p");
   text.textContent = item.text;
-  const path = document.createElement("code");
-  path.textContent = item.path;
-  details.append(title, text, path);
+  copy.append(title, text);
+  details.append(index, copy);
 
+  const player = document.createElement("div");
+  player.className = "result-player";
   const audio = document.createElement("audio");
   audio.controls = true;
+  audio.preload = "metadata";
   audio.src = item.url;
+  audio.setAttribute("aria-label", "试听 " + title.textContent);
 
-  wrapper.append(details, audio);
+  const download = document.createElement("a");
+  download.className = "download-link";
+  download.href = item.url;
+  download.download = item.filename || "";
+  download.title = "下载 " + title.textContent;
+  download.setAttribute("aria-label", download.title);
+  download.textContent = "↓";
+  player.append(audio, download);
+
+  wrapper.append(details, player);
   return wrapper;
 }
 
 function updateModeUI() {
-  const mode = modeSelect.value;
+  const mode = modeInput.value;
   const selectedPreset = cloneModes.includes(mode) ? getSelectedVoicePreset() : null;
   modeNote.textContent = modeNotes[mode];
+
+  for (const card of modeCards) {
+    const isActive = card.dataset.modeValue === mode;
+    card.classList.toggle("is-active", isActive);
+    card.setAttribute("aria-pressed", String(isActive));
+  }
 
   for (const group of document.querySelectorAll("[data-mode-group]")) {
     const modes = visibility[group.dataset.modeGroup] || group.dataset.modeGroup.split(" ");
@@ -97,29 +229,166 @@ function updateModeUI() {
     field.required = modes.includes(mode) && !selectedPreset;
   }
 
-  voicePresetSelect.disabled = !cloneModes.includes(mode) || voicePresets.length === 0;
-  if (voicePresets.length === 0) {
-    voicePresetNote.textContent = "role 文件夹中没有可用预设，将使用上传参考素材。";
-  } else if (selectedPreset) {
-    voicePresetNote.textContent = `使用预设音频：${selectedPreset.audio_filename}`;
-    if (form.elements.ref_text && cloneModes.includes(mode)) {
-      form.elements.ref_text.value = selectedPreset.ref_text;
-    }
-  } else {
-    voicePresetNote.textContent = "可选择 role 文件夹中的预设，或继续上传参考音频。";
+  for (const label of form.querySelectorAll("[data-required-label]")) {
+    label.hidden = !label.dataset.requiredLabel.split(" ").includes(mode);
   }
+
+  voicePresetSelect.disabled = !cloneModes.includes(mode) || voicePresets.length === 0;
+  updatePresetNote(selectedPreset);
 
   const styleField = form.elements.emotion_instruction;
   styleField.disabled = mode === "vox_hifi_clone";
-  if (styleField.disabled) {
-    styleField.value = "";
+  updateUploadState();
+  updateReadiness();
+}
+
+function applyPresetSelection() {
+  const selectedPreset = getSelectedVoicePreset();
+  const refTextField = form.elements.ref_text;
+
+  if (selectedPreset) {
+    if (!activePresetName) {
+      manualRefText = refTextField.value;
+    }
+    refTextField.value = selectedPreset.ref_text;
+    activePresetName = selectedPreset.name;
+  } else if (activePresetName) {
+    refTextField.value = manualRefText;
+    activePresetName = "";
   }
+
+  updateModeUI();
+}
+
+function updatePresetNote(selectedPreset) {
+  if (voicePresets.length === 0) {
+    voicePresetNote.textContent = "role 文件夹中暂无可用预设，请上传参考音频。";
+  } else if (selectedPreset) {
+    voicePresetNote.textContent = "正在使用预设音频：" + selectedPreset.audio_filename;
+  } else {
+    voicePresetNote.textContent = "可直接使用 role 文件夹中的声音，也可以上传临时参考音频。";
+  }
+}
+
+function updateUploadState() {
+  const selectedPreset = cloneModes.includes(modeInput.value) ? getSelectedVoicePreset() : null;
+  refAudioInput.disabled = Boolean(selectedPreset);
+  uploadField.classList.toggle("has-file", Boolean(selectedPreset) || refAudioInput.files.length > 0);
+  uploadField.classList.toggle("is-disabled", Boolean(selectedPreset));
+
+  if (selectedPreset) {
+    fileName.textContent = "已使用预设：" + selectedPreset.audio_filename;
+  } else if (refAudioInput.files.length > 0) {
+    const file = refAudioInput.files[0];
+    fileName.textContent = file.name + " · " + formatFileSize(file.size);
+  } else {
+    fileName.textContent = "支持 WAV、MP3、FLAC、M4A、OGG";
+  }
+}
+
+function updateTextStats() {
+  const value = targetTexts.value;
+  const lines = value.split(String.fromCharCode(10)).filter((line) => line.trim()).length;
+  const characters = Array.from(value).filter((character) => character.trim()).length;
+  lineCount.textContent = lines + " 行";
+  charCount.textContent = characters + " 字";
+  updateReadiness();
+}
+
+function updateReadiness() {
+  const lineTotal = targetTexts.value
+    .split(String.fromCharCode(10))
+    .filter((line) => line.trim()).length;
+  const missingRequired = Array.from(form.querySelectorAll("[required]")).some((field) => {
+    if (field.disabled || field.closest("[hidden]")) {
+      return false;
+    }
+    if (field.type === "file") {
+      return field.files.length === 0;
+    }
+    return !field.value.trim();
+  });
+  const isReady = lineTotal > 0 && !missingRequired;
+  readiness.classList.toggle("is-ready", isReady);
+  readinessText.textContent = isReady
+    ? "设置完成，将生成 " + lineTotal + " 个音频"
+    : "补全必填内容后即可生成";
+}
+
+function validateForm() {
+  clearAllInvalidStates();
+  const requiredFields = Array.from(form.querySelectorAll("[required]"));
+  for (const field of requiredFields) {
+    if (field.disabled || field.closest("[hidden]")) {
+      continue;
+    }
+    const isEmpty = field.type === "file" ? field.files.length === 0 : !field.value.trim();
+    if (isEmpty) {
+      markInvalid(field);
+      const label = field.name === "texts" ? "目标文本" : field.name === "ref_audio" ? "参考音频" : "必填内容";
+      showToast("请填写或选择" + label);
+      field.focus();
+      return false;
+    }
+  }
+
+  for (const field of form.querySelectorAll("input[type='number']")) {
+    if (!field.checkValidity()) {
+      markInvalid(field);
+      showToast("生成参数超出有效范围");
+      field.focus();
+      return false;
+    }
+  }
+  return true;
+}
+
+function markInvalid(field) {
+  const container = field.closest(".field, .upload-field, .textarea-wrap");
+  if (container) {
+    container.classList.add("is-invalid");
+  }
+  field.setAttribute("aria-invalid", "true");
+}
+
+function clearInvalidState(field) {
+  const container = field.closest(".field, .upload-field, .textarea-wrap");
+  if (container) {
+    container.classList.remove("is-invalid");
+  }
+  field.removeAttribute("aria-invalid");
+}
+
+function clearAllInvalidStates() {
+  for (const field of form.querySelectorAll("[aria-invalid='true']")) {
+    clearInvalidState(field);
+  }
+}
+
+function setLoading(isLoading) {
+  submitButton.disabled = isLoading;
+  submitButton.classList.toggle("is-loading", isLoading);
+  buttonLabel.textContent = isLoading ? "正在生成，请稍候" : "开始生成";
+}
+
+function setResultState(state, label) {
+  resultStatus.className = "result-status is-" + state;
+  resultStatus.innerHTML = "<i></i>" + label;
+}
+
+function resetResults() {
+  resultList.replaceChildren();
+  emptyResults.hidden = false;
+  clearResults.hidden = true;
+  message.className = "message";
+  message.textContent = "完成设置并开始生成，你的音频会出现在这里。";
+  setResultState("idle", "等待生成");
 }
 
 async function loadVoicePresets() {
   try {
     const response = await fetch("/api/voice-presets");
-    const payload = await response.json();
+    const payload = await parseResponse(response);
     if (!response.ok) {
       throw new Error(payload.detail || "无法加载语音预设");
     }
@@ -127,7 +396,7 @@ async function loadVoicePresets() {
     renderVoicePresetOptions();
   } catch (error) {
     voicePresets = [];
-    voicePresetNote.textContent = error.message;
+    voicePresetNote.textContent = error instanceof Error ? error.message : "无法加载语音预设";
   } finally {
     updateModeUI();
   }
@@ -147,4 +416,47 @@ function renderVoicePresetOptions() {
 function getSelectedVoicePreset() {
   const selectedName = voicePresetSelect.value;
   return voicePresets.find((preset) => preset.name === selectedName) || null;
+}
+
+function formatFileSize(size) {
+  if (size < 1024 * 1024) {
+    return Math.max(1, Math.round(size / 1024)) + " KB";
+  }
+  return (size / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function initializeTheme() {
+  let storedTheme = "";
+  try {
+    storedTheme = localStorage.getItem("tts-theme") || "";
+  } catch {
+    storedTheme = "";
+  }
+  const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme(storedTheme || (systemDark ? "dark" : "light"));
+}
+
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme || "light";
+  const next = current === "dark" ? "light" : "dark";
+  applyTheme(next);
+  try {
+    localStorage.setItem("tts-theme", next);
+  } catch {
+    // Theme persistence is optional.
+  }
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const icon = themeToggle.querySelector(".theme-icon");
+  icon.textContent = theme === "dark" ? "☀" : "◐";
+  themeToggle.setAttribute("aria-label", theme === "dark" ? "切换到浅色主题" : "切换到深色主题");
+}
+
+function showToast(text) {
+  clearTimeout(toastTimer);
+  toast.textContent = text;
+  toast.classList.add("is-visible");
+  toastTimer = setTimeout(() => toast.classList.remove("is-visible"), 2600);
 }

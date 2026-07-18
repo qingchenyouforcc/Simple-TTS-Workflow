@@ -3,157 +3,325 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Simple TTS Workflow</title>
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#173b35" />
+    <title>Simple TTS Workflow · Voice Studio</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23173b35'/%3E%3Cpath d='M18 26v12M25 18v28M32 23v18M39 14v36M46 26v12' stroke='%23fff7eb' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Simple TTS Studio 首页">
+        <span class="brand-mark" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i>
+        </span>
+        <span>
+          <strong>Simple TTS</strong>
+          <small>VOICE STUDIO</small>
+        </span>
+      </a>
+      <div class="topbar-actions">
+        <span class="service-status"><i></i>本地工作流</span>
+        <button id="theme-toggle" class="icon-button" type="button" aria-label="切换明暗主题">
+          <span class="theme-icon" aria-hidden="true">◐</span>
+        </button>
+      </div>
+    </header>
+
     <main class="shell">
-      <section class="intro">
+      <section class="hero" aria-labelledby="page-title">
         <div>
-          <h1>Simple TTS Workflow</h1>
-          <p>用 VoxCPM2 克隆音色并控制语气，或继续使用 Qwen3-TTS 工作流。</p>
+          <p class="eyebrow"><span>AI VOICE WORKBENCH</span></p>
+          <h1 id="page-title">让每一句话，<em>拥有恰好的声音。</em></h1>
+          <p class="hero-copy">
+            克隆熟悉的音色，设计新的表达方式。VoxCPM2 与 Qwen3-TTS
+            已整理成一条清晰、可控的本地生成流程。
+          </p>
         </div>
-        <span class="status">VoxCPM2 + Qwen3-TTS</span>
+        <div class="hero-meta" aria-label="支持能力">
+          <span><strong>6</strong> 种生成模式</span>
+          <span><strong>11</strong> 种语言</span>
+          <span><strong>∞</strong> 本地保存</span>
+        </div>
       </section>
 
-      <form id="tts-form" class="workspace">
-        <section class="panel">
-          <h2>生成模式</h2>
-          <label>
-            <span>模式</span>
-            <select id="mode-select" name="mode">
-              <optgroup label="VoxCPM2">
-                <option value="vox_controllable_clone" selected>可控克隆</option>
-                <option value="vox_design">语音设计</option>
-                <option value="vox_hifi_clone">Hi-Fi 克隆（高级）</option>
-              </optgroup>
-              <optgroup label="Qwen3-TTS">
-                <option value="clone">参考音频克隆</option>
-                <option value="voice_design">语气设计</option>
-                <option value="voice_design_then_clone">设计后复用</option>
-              </optgroup>
-            </select>
-          </label>
-          <p id="mode-note" class="note"></p>
-
-          <div data-mode-group="reference_audio">
-            <h2>参考素材</h2>
-            <label data-mode-group="voice_preset">
-              <span>语音预设</span>
-              <select id="voice-preset-select" name="voice_preset">
-                <option value="">不使用预设</option>
-              </select>
-            </label>
-            <p id="voice-preset-note" class="note" data-mode-group="voice_preset"></p>
-            <label>
-              <span>参考音频</span>
-              <input
-                name="ref_audio"
-                type="file"
-                accept="audio/*"
-                data-required-when="vox_controllable_clone vox_hifi_clone clone"
-              />
-            </label>
-          </div>
-          <div data-mode-group="reference_text">
-            <label>
-              <span>参考文本</span>
-              <textarea
-                name="ref_text"
-                rows="5"
-                placeholder="输入参考音频中实际说出的内容"
-                data-required-when="vox_hifi_clone clone"
-              ></textarea>
-            </label>
-          </div>
-
-          <div data-mode-group="style">
-            <label>
-              <span>情绪/语气描述</span>
-              <textarea
-                name="emotion_instruction"
-                rows="5"
-                placeholder="例如：用稍微伤感、放慢语速、轻声克制的语气说"
-                data-required-when="voice_design voice_design_then_clone"
-              ></textarea>
-            </label>
-            <label data-mode-group="voice_design_then_clone">
-              <span>设计参考文本</span>
-              <textarea
-                name="design_ref_text"
-                rows="4"
-                placeholder="这段文本会先用语气描述生成参考音频，再复用它生成下面的目标文本"
-                data-required-when="voice_design_then_clone"
-              >今天的天气有点安静，我想用这样的声音慢慢说完这段话。</textarea>
-            </label>
-          </div>
-
-          <div data-mode-group="vox_params">
-            <h2>Vox 参数</h2>
-            <div class="field-row">
-              <label>
-                <span>CFG</span>
-                <input name="cfg_value" type="number" min="1" max="3" step="0.1" value="2.0" />
-              </label>
-              <label>
-                <span>步数</span>
-                <input name="inference_timesteps" type="number" min="4" max="30" step="1" value="10" />
-              </label>
+      <form id="tts-form" novalidate>
+        <section class="panel mode-panel" aria-labelledby="mode-heading">
+          <div class="section-heading">
+            <div class="step-number">01</div>
+            <div>
+              <p class="section-kicker">Choose a workflow</p>
+              <h2 id="mode-heading">选择生成模式</h2>
             </div>
-            <div class="toggle-row">
-              <label class="check">
-                <input name="normalize" type="checkbox" value="true" />
-                <span>文本规范化</span>
-              </label>
-              <label class="check">
-                <input name="denoise" type="checkbox" value="true" />
-                <span>参考音频降噪</span>
-              </label>
-            </div>
+          </div>
+
+          <input id="mode-select" name="mode" type="hidden" value="vox_controllable_clone" />
+          <div class="mode-grid" role="group" aria-label="生成模式">
+            <button class="mode-card is-active" type="button" data-mode-value="vox_controllable_clone" aria-pressed="true">
+              <span class="engine-tag">VOX</span>
+              <strong>可控克隆</strong>
+              <small>保留音色，同时调整语气</small>
+            </button>
+            <button class="mode-card" type="button" data-mode-value="vox_design" aria-pressed="false">
+              <span class="engine-tag">VOX</span>
+              <strong>语音设计</strong>
+              <small>无需参考，直接创造声音</small>
+            </button>
+            <button class="mode-card" type="button" data-mode-value="vox_hifi_clone" aria-pressed="false">
+              <span class="engine-tag">VOX</span>
+              <strong>Hi-Fi 克隆</strong>
+              <small>参考文本提升音色相似度</small>
+            </button>
+            <button class="mode-card" type="button" data-mode-value="clone" aria-pressed="false">
+              <span class="engine-tag qwen">QWEN</span>
+              <strong>参考音频克隆</strong>
+              <small>忠实复刻参考声音与表达</small>
+            </button>
+            <button class="mode-card" type="button" data-mode-value="voice_design" aria-pressed="false">
+              <span class="engine-tag qwen">QWEN</span>
+              <strong>语气设计</strong>
+              <small>用自然语言描述表达方式</small>
+            </button>
+            <button class="mode-card" type="button" data-mode-value="voice_design_then_clone" aria-pressed="false">
+              <span class="engine-tag qwen">QWEN</span>
+              <strong>设计后复用</strong>
+              <small>先设计风格，再批量保持一致</small>
+            </button>
+          </div>
+          <div class="mode-summary">
+            <span class="summary-icon" aria-hidden="true">✦</span>
+            <p id="mode-note"></p>
           </div>
         </section>
 
-        <section class="panel">
-          <h2>生成文本</h2>
-          <label>
-            <span>目标文本（一行生成一个音频）</span>
-            <textarea
-              name="texts"
-              rows="9"
-              placeholder="第一句要生成的内容&#10;第二句要生成的内容"
-              required
-            ></textarea>
-          </label>
-          <div class="field-row">
-            <label>
-              <span>语言</span>
-              <select name="language">
-                <option value="Auto" selected>Auto</option>
-                <option value="Chinese">Chinese</option>
-                <option value="English">English</option>
-                <option value="Japanese">Japanese</option>
-                <option value="Korean">Korean</option>
-                <option value="German">German</option>
-                <option value="French">French</option>
-                <option value="Russian">Russian</option>
-                <option value="Portuguese">Portuguese</option>
-                <option value="Spanish">Spanish</option>
-                <option value="Italian">Italian</option>
-              </select>
+        <div class="workspace">
+          <section class="panel settings-panel" aria-labelledby="settings-heading">
+            <div class="section-heading compact">
+              <div class="step-number">02</div>
+              <div>
+                <p class="section-kicker">Shape the voice</p>
+                <h2 id="settings-heading">声音与风格</h2>
+              </div>
+            </div>
+
+            <div class="field-section" data-mode-group="reference_audio">
+              <div class="subheading">
+                <h3>声音来源</h3>
+                <span>选择预设或上传音频</span>
+              </div>
+
+              <label class="field" data-mode-group="voice_preset">
+                <span class="field-label">语音预设 <small>可选</small></span>
+                <span class="select-wrap">
+                  <select id="voice-preset-select" name="voice_preset">
+                    <option value="">不使用预设</option>
+                  </select>
+                </span>
+              </label>
+              <p id="voice-preset-note" class="field-help" data-mode-group="voice_preset"></p>
+
+              <label class="upload-field">
+                <input
+                  id="ref-audio-input"
+                  name="ref_audio"
+                  type="file"
+                  accept="audio/*"
+                  data-required-when="vox_controllable_clone vox_hifi_clone clone"
+                />
+                <span class="upload-icon" aria-hidden="true">↥</span>
+                <span class="upload-copy">
+                  <strong>拖入参考音频，或点击选择</strong>
+                  <small id="file-name">支持 WAV、MP3、FLAC、M4A、OGG</small>
+                </span>
+                <span class="upload-action">浏览文件</span>
+              </label>
+            </div>
+
+            <div class="field-section" data-mode-group="reference_text">
+              <div class="subheading">
+                <h3>参考文本</h3>
+                <span>请与音频内容逐字对应</span>
+              </div>
+              <label class="field">
+                <span class="field-label">音频中实际说出的内容 <b>必填</b></span>
+                <textarea
+                  name="ref_text"
+                  rows="4"
+                  placeholder="粘贴参考音频的逐字稿…"
+                  data-required-when="vox_hifi_clone clone"
+                ></textarea>
+              </label>
+            </div>
+
+            <div class="field-section" data-mode-group="style">
+              <div class="subheading">
+                <h3>表达方式</h3>
+                <span>使用自然语言描述</span>
+              </div>
+              <label class="field">
+                <span class="field-label">
+                  情绪与语气
+                  <b data-required-label="voice_design voice_design_then_clone">必填</b>
+                </span>
+                <textarea
+                  name="emotion_instruction"
+                  rows="4"
+                  placeholder="例如：语速稍慢，声音温柔克制，带一点故事感…"
+                  data-required-when="voice_design voice_design_then_clone"
+                ></textarea>
+              </label>
+              <div class="prompt-chips" aria-label="语气快捷建议">
+                <button type="button" data-style-prompt="温柔自然，语速稍慢，像在讲一个安静的故事">温柔叙述</button>
+                <button type="button" data-style-prompt="轻快有活力，吐字清晰，带着自然的笑意">轻快明亮</button>
+                <button type="button" data-style-prompt="沉稳克制，语气坚定，节奏从容">沉稳专业</button>
+              </div>
+
+              <label class="field" data-mode-group="voice_design_then_clone">
+                <span class="field-label">设计参考文本 <b>必填</b></span>
+                <textarea
+                  name="design_ref_text"
+                  rows="3"
+                  placeholder="先用这段话生成风格参考音频"
+                  data-required-when="voice_design_then_clone"
+                >今天的天气有点安静，我想用这样的声音慢慢说完这段话。</textarea>
+              </label>
+            </div>
+
+            <details class="advanced-settings" data-mode-group="vox_params">
+              <summary>
+                <span><i aria-hidden="true">⌁</i> 高级生成参数</span>
+                <small>默认值适合多数场景</small>
+              </summary>
+              <div class="advanced-body">
+                <div class="field-row">
+                  <label class="field">
+                    <span class="field-label">CFG <small>1.0–3.0</small></span>
+                    <input name="cfg_value" type="number" min="1" max="3" step="0.1" value="2.0" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">推理步数 <small>4–30</small></span>
+                    <input name="inference_timesteps" type="number" min="4" max="30" step="1" value="10" />
+                  </label>
+                </div>
+                <div class="toggle-row">
+                  <label class="switch">
+                    <input name="normalize" type="checkbox" value="true" />
+                    <span class="switch-track"></span>
+                    <span>文本规范化</span>
+                  </label>
+                  <label class="switch">
+                    <input name="denoise" type="checkbox" value="true" />
+                    <span class="switch-track"></span>
+                    <span>参考音频降噪</span>
+                  </label>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          <section class="panel composer-panel" aria-labelledby="composer-heading">
+            <div class="section-heading compact">
+              <div class="step-number">03</div>
+              <div>
+                <p class="section-kicker">Write and render</p>
+                <h2 id="composer-heading">文本与生成</h2>
+              </div>
+            </div>
+
+            <label class="field target-field">
+              <span class="field-label">目标文本 <b>必填</b></span>
+              <span class="textarea-wrap">
+                <textarea
+                  id="target-texts"
+                  name="texts"
+                  rows="12"
+                  placeholder="在这里输入要生成的内容…&#10;&#10;每一行会生成一个独立音频。"
+                  required
+                ></textarea>
+                <span class="text-stats">
+                  <span id="line-count">0 行</span>
+                  <span id="char-count">0 字</span>
+                </span>
+              </span>
             </label>
-          </div>
-          <button id="submit-button" type="submit">开始生成</button>
-        </section>
+
+            <div class="composer-options">
+              <label class="field language-field">
+                <span class="field-label">语言</span>
+                <span class="select-wrap">
+                  <select name="language">
+                    <option value="Auto" selected>自动识别</option>
+                    <option value="Chinese">中文</option>
+                    <option value="English">English</option>
+                    <option value="Japanese">日本語</option>
+                    <option value="Korean">한국어</option>
+                    <option value="German">Deutsch</option>
+                    <option value="French">Français</option>
+                    <option value="Russian">Русский</option>
+                    <option value="Portuguese">Português</option>
+                    <option value="Spanish">Español</option>
+                    <option value="Italian">Italiano</option>
+                  </select>
+                </span>
+              </label>
+              <div class="batch-tip">
+                <span aria-hidden="true">≋</span>
+                <p><strong>批量生成</strong>每个非空行会输出一个 WAV 文件。</p>
+              </div>
+            </div>
+
+            <div class="generate-area">
+              <div class="generation-readiness">
+                <span class="readiness-dot"></span>
+                <span id="readiness-text">填写文本后即可生成</span>
+              </div>
+              <button id="submit-button" class="primary-button" type="submit">
+                <span class="button-label">开始生成</span>
+                <span class="button-icon" aria-hidden="true">→</span>
+                <span class="button-spinner" aria-hidden="true"></span>
+              </button>
+              <p class="privacy-note"><span aria-hidden="true">⌂</span> 音频和文本仅在本机处理与保存</p>
+            </div>
+          </section>
+        </div>
       </form>
 
-      <section class="results" aria-live="polite">
+      <section id="results" class="panel results-panel" aria-labelledby="results-heading" aria-live="polite">
         <div class="results-header">
-          <h2>生成结果</h2>
-          <p id="message">还没有生成内容。</p>
+          <div class="section-heading compact">
+            <div class="step-number result-step">✓</div>
+            <div>
+              <p class="section-kicker">Listen and export</p>
+              <h2 id="results-heading">生成结果</h2>
+            </div>
+          </div>
+          <div class="result-actions">
+            <span id="result-status" class="result-status is-idle"><i></i>等待生成</span>
+            <button id="clear-results" class="text-button" type="button" hidden>清空结果</button>
+          </div>
+        </div>
+
+        <div id="message" class="message">完成设置并开始生成，你的音频会出现在这里。</div>
+        <div id="empty-results" class="empty-results">
+          <div class="empty-visual" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <strong>还没有生成内容</strong>
+          <p>选择一种模式，输入文本，然后让声音开始工作。</p>
         </div>
         <div id="result-list" class="result-list"></div>
       </section>
+
+      <footer>
+        <span>Simple TTS Studio</span>
+        <span>VoxCPM2 · Qwen3-TTS · Local-first</span>
+      </footer>
     </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/static/app.js"></script>
   </body>
 </html>
