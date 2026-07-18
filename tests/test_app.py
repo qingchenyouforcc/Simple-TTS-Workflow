@@ -15,6 +15,9 @@ def test_index_renders_form() -> None:
     assert "Simple TTS Workflow" in response.text
     assert "vox_controllable_clone" in response.text
     assert "voice_preset" in response.text
+    assert 'id="mode-select"' in response.text
+    assert 'id="target-texts"' in response.text
+    assert 'id="result-list"' in response.text
 
 
 def test_vox_controllable_clone_requires_reference_audio() -> None:

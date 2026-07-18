@@ -11,6 +11,7 @@ from typing import Any
 
 import soundfile as sf
 
+from .model_download import resolve_huggingface_model
 from .settings import MODEL_ID, OUTPUT_DIR, VOICE_DESIGN_MODEL_ID, VOXCPM_MODEL_ID
 
 
@@ -63,6 +64,11 @@ class QwenTTSService:
             logger.info("Using cached Qwen model: model=%s", model_id)
             return self._models[model_id]
 
+        # Download the complete repository first, then load from the local
+        # snapshot. This avoids extra remote HEAD requests from Transformers
+        # while it probes optional custom generation code.
+        model_path = resolve_huggingface_model(model_id)
+
         from qwen_tts import Qwen3TTSModel
         import torch
 
@@ -88,8 +94,13 @@ class QwenTTSService:
         else:
             kwargs.update({"device_map": "cpu", "dtype": torch.float32})
 
-        logger.info("Loading Qwen model: model=%s kwargs=%s", model_id, _safe_kwargs(kwargs))
-        self._models[model_id] = Qwen3TTSModel.from_pretrained(model_id, **kwargs)
+        logger.info(
+            "Loading Qwen model: model=%s local_path=%s kwargs=%s",
+            model_id,
+            model_path,
+            _safe_kwargs(kwargs),
+        )
+        self._models[model_id] = Qwen3TTSModel.from_pretrained(model_path, **kwargs)
         logger.info("Qwen model loaded: model=%s", model_id)
         return self._models[model_id]
 
