@@ -18,6 +18,11 @@ def test_index_renders_form() -> None:
     assert 'id="mode-select"' in response.text
     assert 'id="target-texts"' in response.text
     assert 'id="result-list"' in response.text
+    assert 'id="app-sidebar"' in response.text
+    assert 'id="results-nav"' in response.text
+    assert 'data-view-panel="studio"' in response.text
+    assert 'data-view-panel="results"' in response.text
+    assert response.text.count("data-mode-value=") == 6
 
 
 def test_vox_controllable_clone_requires_reference_audio() -> None:
