@@ -13,94 +13,87 @@
     <div class="ambient ambient-one" aria-hidden="true"></div>
     <div class="ambient ambient-two" aria-hidden="true"></div>
 
-    <header class="topbar">
-      <a class="brand" href="/" aria-label="Simple TTS Studio 首页">
-        <span class="brand-mark" aria-hidden="true">
-          <i></i><i></i><i></i><i></i><i></i>
-        </span>
-        <span>
-          <strong>Simple TTS</strong>
-          <small>VOICE STUDIO</small>
-        </span>
-      </a>
-      <div class="topbar-actions">
-        <span class="service-status"><i></i>本地工作流</span>
-        <button id="theme-toggle" class="icon-button" type="button" aria-label="切换明暗主题">
-          <span class="theme-icon" aria-hidden="true">◐</span>
-        </button>
-      </div>
-    </header>
+    <div class="app-shell">
+      <aside id="app-sidebar" class="sidebar" aria-label="语音工作台导航">
+        <div class="sidebar-header">
+          <a class="brand" href="/" aria-label="Simple TTS Studio 首页">
+            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+            <span><strong>Simple TTS</strong><small>VOICE STUDIO</small></span>
+          </a>
+          <button id="sidebar-close" class="icon-button sidebar-close" type="button" aria-label="关闭导航"><span aria-hidden="true">×</span></button>
+        </div>
 
-    <main class="shell">
-      <section class="hero" aria-labelledby="page-title">
-        <div>
-          <p class="eyebrow"><span>AI VOICE WORKBENCH</span></p>
-          <h1 id="page-title">让每一句话，<em>拥有恰好的声音。</em></h1>
-          <p class="hero-copy">
-            克隆熟悉的音色，设计新的表达方式。VoxCPM2 与 Qwen3-TTS
-            已整理成一条清晰、可控的本地生成流程。
-          </p>
+        <nav class="sidebar-nav" aria-label="功能导航">
+          <div class="nav-group">
+            <p class="nav-group-label">声音克隆</p>
+            <button class="nav-item is-active" type="button" data-mode-value="vox_controllable_clone" aria-current="page">
+              <span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-copy"><strong>可控克隆</strong><small>VoxCPM2 · 推荐</small></span>
+            </button>
+            <button class="nav-item" type="button" data-mode-value="vox_hifi_clone">
+              <span class="nav-icon" aria-hidden="true">≈</span><span class="nav-copy"><strong>Hi-Fi 克隆</strong><small>VoxCPM2 · 高相似度</small></span>
+            </button>
+            <button class="nav-item" type="button" data-mode-value="clone">
+              <span class="nav-icon" aria-hidden="true">◉</span><span class="nav-copy"><strong>参考音频克隆</strong><small>Qwen3-TTS</small></span>
+            </button>
+          </div>
+          <div class="nav-group">
+            <p class="nav-group-label">声音设计</p>
+            <button class="nav-item" type="button" data-mode-value="vox_design">
+              <span class="nav-icon" aria-hidden="true">✦</span><span class="nav-copy"><strong>语音设计</strong><small>VoxCPM2</small></span>
+            </button>
+            <button class="nav-item" type="button" data-mode-value="voice_design">
+              <span class="nav-icon" aria-hidden="true">✎</span><span class="nav-copy"><strong>语气设计</strong><small>Qwen3-TTS</small></span>
+            </button>
+            <button class="nav-item" type="button" data-mode-value="voice_design_then_clone">
+              <span class="nav-icon" aria-hidden="true">∞</span><span class="nav-copy"><strong>设计后复用</strong><small>Qwen3-TTS · 批量一致</small></span>
+            </button>
+          </div>
+          <div class="nav-group nav-group-results">
+            <p class="nav-group-label">输出</p>
+            <button id="results-nav" class="nav-item" type="button" data-view="results">
+              <span class="nav-icon" aria-hidden="true">▷</span><span class="nav-copy"><strong>生成结果</strong><small>试听与导出</small></span>
+              <span id="results-count" class="nav-badge" hidden>0</span>
+            </button>
+          </div>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="service-status"><i></i><span><strong>服务已就绪</strong><small>本地工作流</small></span></div>
+          <button id="theme-toggle" class="theme-button" type="button" aria-label="切换明暗主题">
+            <span class="theme-icon" aria-hidden="true">◐</span><span class="theme-label">切换主题</span>
+          </button>
         </div>
-        <div class="hero-meta" aria-label="支持能力">
-          <span><strong>6</strong> 种生成模式</span>
-          <span><strong>11</strong> 种语言</span>
-          <span><strong>∞</strong> 本地保存</span>
-        </div>
-      </section>
+      </aside>
+
+      <button id="sidebar-overlay" class="sidebar-overlay" type="button" aria-label="关闭导航" tabindex="-1"></button>
+      <div class="main-column">
+        <header class="mobile-topbar">
+          <button id="sidebar-open" class="icon-button menu-button" type="button" aria-label="打开导航" aria-controls="app-sidebar" aria-expanded="false"><span aria-hidden="true">☰</span></button>
+          <span class="mobile-brand">Simple TTS</span>
+          <span class="mobile-status" aria-label="本地服务已就绪"><i></i>本地</span>
+        </header>
+
+    <main class="content-shell">
+      <section id="studio-view" class="app-view" data-view-panel="studio" aria-labelledby="page-title">
+        <header class="workspace-header">
+          <div>
+            <p class="eyebrow"><span id="mode-category">声音克隆 · VOXCPM2</span></p>
+            <h1 id="page-title">可控克隆</h1>
+            <p id="mode-note" class="workspace-description"></p>
+          </div>
+          <div class="workspace-meta" aria-label="当前工作流特性">
+            <span><i aria-hidden="true">≋</i> 支持批量</span>
+            <span><i aria-hidden="true">⌂</i> 本地处理</span>
+          </div>
+        </header>
 
       <form id="tts-form" novalidate>
-        <section class="panel mode-panel" aria-labelledby="mode-heading">
-          <div class="section-heading">
-            <div class="step-number">01</div>
-            <div>
-              <p class="section-kicker">Choose a workflow</p>
-              <h2 id="mode-heading">选择生成模式</h2>
-            </div>
-          </div>
-
-          <input id="mode-select" name="mode" type="hidden" value="vox_controllable_clone" />
-          <div class="mode-grid" role="group" aria-label="生成模式">
-            <button class="mode-card is-active" type="button" data-mode-value="vox_controllable_clone" aria-pressed="true">
-              <span class="engine-tag">VOX</span>
-              <strong>可控克隆</strong>
-              <small>保留音色，同时调整语气</small>
-            </button>
-            <button class="mode-card" type="button" data-mode-value="vox_design" aria-pressed="false">
-              <span class="engine-tag">VOX</span>
-              <strong>语音设计</strong>
-              <small>无需参考，直接创造声音</small>
-            </button>
-            <button class="mode-card" type="button" data-mode-value="vox_hifi_clone" aria-pressed="false">
-              <span class="engine-tag">VOX</span>
-              <strong>Hi-Fi 克隆</strong>
-              <small>参考文本提升音色相似度</small>
-            </button>
-            <button class="mode-card" type="button" data-mode-value="clone" aria-pressed="false">
-              <span class="engine-tag qwen">QWEN</span>
-              <strong>参考音频克隆</strong>
-              <small>忠实复刻参考声音与表达</small>
-            </button>
-            <button class="mode-card" type="button" data-mode-value="voice_design" aria-pressed="false">
-              <span class="engine-tag qwen">QWEN</span>
-              <strong>语气设计</strong>
-              <small>用自然语言描述表达方式</small>
-            </button>
-            <button class="mode-card" type="button" data-mode-value="voice_design_then_clone" aria-pressed="false">
-              <span class="engine-tag qwen">QWEN</span>
-              <strong>设计后复用</strong>
-              <small>先设计风格，再批量保持一致</small>
-            </button>
-          </div>
-          <div class="mode-summary">
-            <span class="summary-icon" aria-hidden="true">✦</span>
-            <p id="mode-note"></p>
-          </div>
-        </section>
+        <input id="mode-select" name="mode" type="hidden" value="vox_controllable_clone" />
 
         <div class="workspace">
           <section class="panel settings-panel" aria-labelledby="settings-heading">
             <div class="section-heading compact">
-              <div class="step-number">02</div>
+              <div class="step-number">01</div>
               <div>
                 <p class="section-kicker">Shape the voice</p>
                 <h2 id="settings-heading">声音与风格</h2>
@@ -224,7 +217,7 @@
 
           <section class="panel composer-panel" aria-labelledby="composer-heading">
             <div class="section-heading compact">
-              <div class="step-number">03</div>
+              <div class="step-number">02</div>
               <div>
                 <p class="section-kicker">Write and render</p>
                 <h2 id="composer-heading">文本与生成</h2>
@@ -288,14 +281,25 @@
           </section>
         </div>
       </form>
+      </section>
 
-      <section id="results" class="panel results-panel" aria-labelledby="results-heading" aria-live="polite">
+      <section id="results" class="app-view results-view" data-view-panel="results" aria-labelledby="results-heading" aria-live="polite" hidden>
+        <header class="workspace-header results-page-header">
+          <div>
+            <p class="eyebrow"><span>LISTEN AND EXPORT</span></p>
+            <h1 id="results-heading">生成结果</h1>
+            <p class="workspace-description">试听本次生成的音频，或将 WAV 文件保存到需要的位置。</p>
+          </div>
+          <button id="back-to-studio" class="secondary-button" type="button"><span aria-hidden="true">←</span> 继续创作</button>
+        </header>
+
+        <div class="panel results-panel">
         <div class="results-header">
           <div class="section-heading compact">
             <div class="step-number result-step">✓</div>
             <div>
               <p class="section-kicker">Listen and export</p>
-              <h2 id="results-heading">生成结果</h2>
+              <h2>本次输出</h2>
             </div>
           </div>
           <div class="result-actions">
@@ -310,9 +314,10 @@
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
           </div>
           <strong>还没有生成内容</strong>
-          <p>选择一种模式，输入文本，然后让声音开始工作。</p>
+          <p>从侧边栏选择一种模式，输入文本，然后让声音开始工作。</p>
         </div>
         <div id="result-list" class="result-list"></div>
+        </div>
       </section>
 
       <footer>
@@ -320,6 +325,8 @@
         <span>VoxCPM2 · Qwen3-TTS · Local-first</span>
       </footer>
     </main>
+      </div>
+    </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/static/app.js"></script>
