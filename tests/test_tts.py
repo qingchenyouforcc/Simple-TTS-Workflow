@@ -1,8 +1,10 @@
+import json
 from pathlib import Path
 
 import pytest
 
 from simplettsworkflow.tts import QwenTTSService, split_text_lines
+from simplettsworkflow.emotion import EmotionAnalysis
 
 
 class FakeModel:
@@ -234,3 +236,72 @@ def test_load_qwen_model_uses_downloaded_snapshot(monkeypatch, tmp_path: Path) -
     assert model is fake_model
     assert calls[0][0] == (str(tmp_path / "cached-snapshot"),)
     assert calls[0][1]["device_map"] == "cpu"
+
+
+def test_scene_dubbing_analyzes_before_loading_vox_and_writes_metadata(monkeypatch, tmp_path: Path) -> None:
+    events = []
+
+    class FakeAnalyzer:
+        model_id = "local/emotion-Q4_K_M.gguf"
+
+        def analyze_lines(self, texts):
+            events.append(("analyze", list(texts)))
+            return [
+                EmotionAnalysis(1, texts[0], "开心明亮，语速较快，音调稍高，音量适中，节奏轻快"),
+                EmotionAnalysis(2, texts[1], "悲伤克制，语速缓慢，音调低沉，音量较轻，停顿明显"),
+            ]
+
+    fake_model = FakeVoxModel()
+    service = QwenTTSService(output_dir=tmp_path, emotion_analyzer=FakeAnalyzer())
+
+    def load_vox():
+        events.append(("load_vox", None))
+        return fake_model
+
+    monkeypatch.setattr(service, "_load_voxcpm_model", load_vox)
+    monkeypatch.setattr("simplettsworkflow.tts.sf.write", lambda path, wav, sr: None)
+
+    result = service.generate_scene_dubbing(
+        ref_audio_path=tmp_path / "voice.wav",
+        texts=["今天真是太好了！", "可是你再也不会回来了。"],
+        cfg_value=1.8,
+        inference_timesteps=12,
+        normalize=True,
+        denoise=False,
+    )
+
+    assert [event[0] for event in events] == ["analyze", "load_vox"]
+    assert fake_model.generate_calls[0]["text"].startswith("(开心明亮")
+    assert fake_model.generate_calls[0]["text"].endswith("今天真是太好了！")
+    assert fake_model.generate_calls[1]["text"].startswith("(悲伤克制")
+    assert fake_model.generate_calls[0]["reference_wav_path"] == str(tmp_path / "voice.wav")
+    assert fake_model.generate_calls[0]["cfg_value"] == 1.8
+    assert len(result.emotion_analyses) == 2
+
+    metadata = json.loads((Path(result.output_dir) / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["mode"] == "scene_dubbing"
+    assert metadata["emotion_analysis_model"] == "local/emotion-Q4_K_M.gguf"
+    assert metadata["emotion_analyses"][1]["instruction"].startswith("悲伤克制")
+
+
+def test_scene_dubbing_analysis_failure_does_not_load_vox(monkeypatch, tmp_path: Path) -> None:
+    class FailingAnalyzer:
+        model_id = "local/emotion.gguf"
+
+        def analyze_lines(self, texts):
+            raise ValueError("第 1 行情绪分析失败")
+
+    service = QwenTTSService(output_dir=tmp_path, emotion_analyzer=FailingAnalyzer())
+    monkeypatch.setattr(
+        service,
+        "_load_voxcpm_model",
+        lambda: pytest.fail("VoxCPM2 must not load after analysis failure"),
+    )
+
+    with pytest.raises(ValueError, match="第 1 行情绪分析失败"):
+        service.generate_scene_dubbing(
+            ref_audio_path=tmp_path / "voice.wav",
+            texts=["hello"],
+        )
+
+    assert list(tmp_path.iterdir()) == []
