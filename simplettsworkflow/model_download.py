@@ -141,6 +141,84 @@ def resolve_huggingface_model(model_id_or_path: str) -> str:
     ) from last_error
 
 
+def resolve_huggingface_file(repo_id: str, filename: str) -> str:
+    """Return one cached Hub file, downloading only that file when needed."""
+    settings = configure_huggingface_downloads()
+    from huggingface_hub import hf_hub_download
+
+    logger.info(
+        "Downloading model file: repo=%s filename=%s endpoint=%s fallback_endpoint=%s "
+        "etag_timeout=%ss download_timeout=%ss retries=%s offline=%s",
+        repo_id,
+        filename,
+        settings.endpoint,
+        settings.fallback_endpoint,
+        settings.etag_timeout,
+        settings.download_timeout,
+        settings.retries,
+        settings.offline,
+    )
+
+    endpoints = [settings.endpoint]
+    if settings.fallback_endpoint is not None and not settings.offline:
+        endpoints.append(settings.fallback_endpoint)
+
+    last_error: Exception | None = None
+    for endpoint_index, endpoint in enumerate(endpoints):
+        for attempt in range(1, settings.retries + 1):
+            try:
+                file_path = hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filename,
+                    endpoint=endpoint,
+                    etag_timeout=settings.etag_timeout,
+                    local_files_only=settings.offline,
+                )
+                logger.info(
+                    "Model file ready: repo=%s filename=%s endpoint=%s path=%s",
+                    repo_id,
+                    filename,
+                    endpoint,
+                    file_path,
+                )
+                return file_path
+            except Exception as exc:
+                last_error = exc
+                if settings.offline:
+                    break
+                if attempt < settings.retries:
+                    delay = min(2 ** (attempt - 1), 8)
+                    logger.warning(
+                        "Model file download attempt failed; retrying: repo=%s filename=%s "
+                        "endpoint=%s attempt=%s/%s delay=%ss error=%r",
+                        repo_id,
+                        filename,
+                        endpoint,
+                        attempt,
+                        settings.retries,
+                        delay,
+                        exc,
+                    )
+                    time.sleep(delay)
+
+        if endpoint_index + 1 < len(endpoints):
+            logger.warning(
+                "Model file endpoint exhausted; switching to fallback: repo=%s filename=%s "
+                "from_endpoint=%s to_endpoint=%s",
+                repo_id,
+                filename,
+                endpoint,
+                endpoints[endpoint_index + 1],
+            )
+
+    attempted_endpoints = ", ".join(endpoints)
+    raise RuntimeError(
+        f"模型文件下载失败（仓库：{repo_id}；文件：{filename}；"
+        f"已尝试端点：{attempted_endpoints}；每个端点最多 {settings.retries} 次）。"
+        "请检查网络，或通过 QWEN_EMOTION_MODEL_PATH 指定本地 GGUF 文件。"
+    ) from last_error
+
+
 def _positive_int_env(name: str, default: int) -> int:
     raw_value = os.getenv(name)
     if raw_value is None:
