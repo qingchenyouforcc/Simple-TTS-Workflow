@@ -32,7 +32,7 @@ const resultStatus = document.querySelector("#result-status");
 const clearResults = document.querySelector("#clear-results");
 const themeToggle = document.querySelector("#theme-toggle");
 const toast = document.querySelector("#toast");
-const cloneModes = ["vox_controllable_clone", "vox_hifi_clone", "clone"];
+const cloneModes = ["vox_controllable_clone", "scene_dubbing", "vox_hifi_clone", "clone"];
 
 let voicePresets = [];
 let activePresetName = "";
@@ -42,6 +42,7 @@ let currentView = "studio";
 
 const modeNotes = {
   vox_controllable_clone: "推荐入门使用。上传一段参考音频保留音色，再用自然语言控制情绪、节奏与表达方式。",
+  scene_dubbing: "Qwen3.5 会逐行理解文本情景并自动设计情绪与表达，再由 VoxCPM2 使用指定音色完成配音。",
   vox_design: "不需要参考音频。描述你想要的声音与语气，VoxCPM2 会直接生成一个新的表达。",
   vox_hifi_clone: "适合更看重音色相似度的场景。需要参考音频及逐字文本，此模式不使用语气描述。",
   clone: "使用 Qwen3-TTS Base 忠实克隆参考音频。表达方式主要来自参考音频本身。",
@@ -51,6 +52,7 @@ const modeNotes = {
 
 const modeMeta = {
   vox_controllable_clone: { title: "可控克隆", category: "声音克隆 · VOXCPM2" },
+  scene_dubbing: { title: "情景配音", category: "智能配音 · QWEN3.5 + VOXCPM2" },
   vox_design: { title: "语音设计", category: "声音设计 · VOXCPM2" },
   vox_hifi_clone: { title: "Hi-Fi 克隆", category: "声音克隆 · VOXCPM2" },
   clone: { title: "参考音频克隆", category: "声音克隆 · QWEN3-TTS" },
@@ -59,12 +61,12 @@ const modeMeta = {
 };
 
 const visibility = {
-  reference_audio: ["vox_controllable_clone", "vox_hifi_clone", "clone"],
+  reference_audio: ["vox_controllable_clone", "scene_dubbing", "vox_hifi_clone", "clone"],
   voice_preset: cloneModes,
   reference_text: ["vox_hifi_clone", "clone"],
   style: ["vox_controllable_clone", "vox_design", "voice_design", "voice_design_then_clone"],
   voice_design_then_clone: ["voice_design_then_clone"],
-  vox_params: ["vox_controllable_clone", "vox_design", "vox_hifi_clone"],
+  vox_params: ["vox_controllable_clone", "scene_dubbing", "vox_design", "vox_hifi_clone"],
 };
 
 initializeTheme();
@@ -143,7 +145,9 @@ async function handleSubmit(event) {
   setLoading(true);
   setResultState("loading", "正在生成");
   message.className = "message";
-  message.textContent = "模型正在准备并生成音频。首次使用可能还需要下载权重，请保持页面开启。";
+  message.textContent = modeInput.value === "scene_dubbing"
+    ? "Qwen3.5 正在逐行分析情绪，随后将由 VoxCPM2 生成音频。首次使用需要下载模型，请保持页面开启。"
+    : "模型正在准备并生成音频。首次使用可能还需要下载权重，请保持页面开启。";
   emptyResults.hidden = true;
   resultList.replaceChildren();
   updateResultsCount(0);
@@ -160,8 +164,11 @@ async function handleSubmit(event) {
     }
 
     renderSuccessMessage(payload);
+    const analysesByIndex = new Map(
+      (payload.emotion_analyses || []).map((analysis) => [analysis.index, analysis]),
+    );
     payload.items.forEach((item, index) => {
-      resultList.appendChild(renderResult(item, index));
+      resultList.appendChild(renderResult(item, index, analysesByIndex.get(item.index)));
     });
     updateResultsCount(payload.items.length);
     setResultState("success", "生成完成");
@@ -207,7 +214,7 @@ function renderSuccessMessage(payload) {
   message.replaceChildren(summary, copyButton);
 }
 
-function renderResult(item, animationIndex) {
+function renderResult(item, animationIndex, emotionAnalysis) {
   const wrapper = document.createElement("article");
   wrapper.className = "result-item";
   wrapper.style.animationDelay = String(animationIndex * 55) + "ms";
@@ -225,6 +232,16 @@ function renderResult(item, animationIndex) {
   const text = document.createElement("p");
   text.textContent = item.text;
   copy.append(title, text);
+  if (emotionAnalysis) {
+    const emotion = document.createElement("p");
+    emotion.className = "result-emotion";
+    const label = document.createElement("strong");
+    label.textContent = "情绪分析";
+    const instruction = document.createElement("span");
+    instruction.textContent = emotionAnalysis.instruction;
+    emotion.append(label, instruction);
+    copy.append(emotion);
+  }
   details.append(index, copy);
 
   const player = document.createElement("div");
@@ -415,7 +432,9 @@ function clearAllInvalidStates() {
 function setLoading(isLoading) {
   submitButton.disabled = isLoading;
   submitButton.classList.toggle("is-loading", isLoading);
-  buttonLabel.textContent = isLoading ? "正在生成，请稍候" : "开始生成";
+  buttonLabel.textContent = isLoading
+    ? modeInput.value === "scene_dubbing" ? "正在分析并生成" : "正在生成，请稍候"
+    : "开始生成";
 }
 
 function setResultState(state, label) {

@@ -1,6 +1,6 @@
 # Simple Qwen3-TTS Workflow
 
-一个简单的本地 TTS Web 工作流：默认使用 VoxCPM2 进行可控声音克隆，也保留 Qwen3-TTS 的 clone 与 VoiceDesign 流程。生成的 `.wav` 文件会保存到 `output/`。
+一个简单的本地 TTS Web 工作流：默认使用 VoxCPM2 进行可控声音克隆，支持由 Qwen3.5 自动分析情绪的“情景配音”，也保留 Qwen3-TTS 的 clone 与 VoiceDesign 流程。生成的 `.wav` 文件会保存到 `output/`。
 
 ## 环境
 
@@ -71,6 +71,7 @@ role/
 ### VoxCPM2
 
 - `可控克隆`：默认模式。上传参考音频克隆音色，可选填写情绪/语气描述。程序会按 VoxCPM2 要求把描述包装成 `(语气描述)目标文本`，并通过 `reference_wav_path` 保留音色。
+- `情景配音`：选择语音预设或上传参考音频后，Qwen3.5 2B Q4_K_M 会逐行分析正文的情绪、强度、语速、音高、音量和停顿，再把每行指令交给 VoxCPM2。分析结果会显示在音频旁并写入 `metadata.json`。首次使用会额外下载约 1.4GB 的 GGUF 模型。
 - `语音设计`：不需要参考音频，可选填写语气描述来生成新声音。
 - `Hi-Fi 克隆（高级）`：上传参考音频并填写逐字参考文本，提高声音相似度。VoxCPM2 文档说明这个路径会忽略语气控制，所以界面会禁用情绪/语气描述。
 
@@ -108,10 +109,22 @@ role/
 - `VOXCPM_DEVICE`：VoxCPM2 运行设备，默认 `auto`
 - `VOXCPM_OPTIMIZE`：是否启用 VoxCPM2 `torch.compile` 优化，默认 `true`
 - `VOXCPM_LOAD_DENOISER`：是否加载 VoxCPM2 denoiser，默认 `false`
+- `QWEN_EMOTION_MODEL_PATH`：本地 Qwen3.5 GGUF 文件；设置后不会从 Hub 下载情绪分析模型
+- `QWEN_EMOTION_MODEL_REPO`：情绪分析 GGUF 仓库，默认 `bartowski/Qwen_Qwen3.5-2B-GGUF`
+- `QWEN_EMOTION_MODEL_FILE`：仓库内文件名，默认 `Qwen_Qwen3.5-2B-Q4_K_M.gguf`
+- `QWEN_EMOTION_N_CTX`：情绪分析上下文长度，默认 `4096`
+- `QWEN_EMOTION_N_GPU_LAYERS`：卸载到 GPU 的层数，默认 `-1`（全部层）
+- `QWEN_EMOTION_MAIN_GPU`：llama.cpp Vulkan 设备编号；本机默认 `1` 对应 RTX 4080，如显卡枚举顺序不同可覆盖。情绪分析完成后会释放模型，再启动 VoxCPM2 生成
+- `SIMPLETTS_LOG_LEVEL`：终端日志级别，默认 `INFO`；设为 `DEBUG` 会额外显示静态资源请求等细节
 - `QWEN_TTS_MODEL`：模型 ID 或本地模型目录，默认 `Qwen/Qwen3-TTS-12Hz-1.7B-Base`
 - `QWEN_TTS_VOICE_DESIGN_MODEL`：VoiceDesign 模型 ID 或本地模型目录，默认 `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`
 - `QWEN_TTS_DEVICE`：设置为 `cuda` 强制使用 GPU；未设置时自动检测 CUDA
 - `QWEN_TTS_FLASH_ATTENTION=0`：禁用 FlashAttention 参数
+
+终端日志会显示 HTTP 请求、模型下载与加载耗时、逐行情绪分析结果、失败重试、VoxCPM2 每行生成进度、音频写入路径和总耗时。如需最详细日志：
+
+    $env:SIMPLETTS_LOG_LEVEL = "DEBUG"
+    uv run python main.py
 
 ## 输出
 

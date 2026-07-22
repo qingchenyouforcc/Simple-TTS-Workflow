@@ -22,7 +22,8 @@ def test_index_renders_form() -> None:
     assert 'id="results-nav"' in response.text
     assert 'data-view-panel="studio"' in response.text
     assert 'data-view-panel="results"' in response.text
-    assert response.text.count("data-mode-value=") == 6
+    assert response.text.count("data-mode-value=") == 7
+    assert 'data-mode-value="scene_dubbing"' in response.text
 
 
 def test_vox_controllable_clone_requires_reference_audio() -> None:
@@ -31,6 +32,51 @@ def test_vox_controllable_clone_requires_reference_audio() -> None:
         data={"mode": "vox_controllable_clone", "texts": "hello"},
     )
     assert response.status_code == 400
+
+
+def test_scene_dubbing_requires_reference_audio() -> None:
+    response = client.post(
+        "/api/generate",
+        data={"mode": "scene_dubbing", "texts": "hello"},
+    )
+    assert response.status_code == 400
+
+
+def test_scene_dubbing_uses_service_and_returns_analyses(monkeypatch, tmp_path: Path) -> None:
+    class FakeResult:
+        output_dir = str(tmp_path)
+        items = [
+            SimpleNamespace(
+                index=1,
+                text="太好了！",
+                filename="line_001.wav",
+                path=str(tmp_path / "line_001.wav"),
+                url="/outputs/run/line_001.wav",
+            )
+        ]
+        emotion_analyses = [
+            SimpleNamespace(
+                index=1,
+                text="太好了！",
+                instruction="开心明亮，语速较快，音调稍高，音量适中，节奏轻快",
+            )
+        ]
+
+    def fake_generate_scene_dubbing(**kwargs):
+        assert kwargs["texts"] == ["太好了！"]
+        assert kwargs["ref_audio_path"].name == "reference.wav"
+        assert kwargs["cfg_value"] == 1.9
+        return FakeResult()
+
+    monkeypatch.setattr("simplettsworkflow.app.service.generate_scene_dubbing", fake_generate_scene_dubbing)
+    response = client.post(
+        "/api/generate",
+        data={"mode": "scene_dubbing", "texts": "太好了！", "cfg_value": "1.9"},
+        files={"ref_audio": ("ref.wav", b"audio", "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["emotion_analyses"][0]["instruction"].startswith("开心明亮")
 
 
 def test_clone_generate_requires_target_text() -> None:
@@ -241,6 +287,43 @@ def test_vox_controllable_clone_uses_voice_preset_without_upload(monkeypatch, tm
     response = client.post(
         "/api/generate",
         data={"mode": "vox_controllable_clone", "voice_preset": "Alice", "texts": "hello"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_scene_dubbing_uses_voice_preset_without_upload(monkeypatch, tmp_path: Path) -> None:
+    preset_dir = tmp_path / "narrator"
+    preset_dir.mkdir()
+    preset_audio = preset_dir / "narrator.wav"
+    preset_audio.write_bytes(b"audio")
+    (preset_dir / "preset.json").write_text(
+        '{"name": "Narrator", "reference": "narrator.wav", "reference_text": "preset transcript"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("simplettsworkflow.app.ROLE_DIR", tmp_path)
+
+    class FakeResult:
+        output_dir = str(tmp_path)
+        items = [
+            SimpleNamespace(
+                index=1,
+                text="情景文本",
+                filename="line_001.wav",
+                path=str(tmp_path / "line_001.wav"),
+                url="/outputs/run/line_001.wav",
+            )
+        ]
+        emotion_analyses = []
+
+    def fake_generate_scene_dubbing(**kwargs):
+        assert kwargs["ref_audio_path"] == preset_audio.resolve()
+        return FakeResult()
+
+    monkeypatch.setattr("simplettsworkflow.app.service.generate_scene_dubbing", fake_generate_scene_dubbing)
+    response = client.post(
+        "/api/generate",
+        data={"mode": "scene_dubbing", "voice_preset": "Narrator", "texts": "情景文本"},
     )
 
     assert response.status_code == 200

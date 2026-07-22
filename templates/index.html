@@ -29,6 +29,9 @@
             <button class="nav-item is-active" type="button" data-mode-value="vox_controllable_clone" aria-current="page">
               <span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-copy"><strong>可控克隆</strong><small>VoxCPM2 · 推荐</small></span>
             </button>
+            <button class="nav-item" type="button" data-mode-value="scene_dubbing">
+              <span class="nav-icon" aria-hidden="true">◈</span><span class="nav-copy"><strong>情景配音</strong><small>Qwen3.5 + VoxCPM2</small></span>
+            </button>
             <button class="nav-item" type="button" data-mode-value="vox_hifi_clone">
               <span class="nav-icon" aria-hidden="true">≈</span><span class="nav-copy"><strong>Hi-Fi 克隆</strong><small>VoxCPM2 · 高相似度</small></span>
             </button>
@@ -122,7 +125,7 @@
                   name="ref_audio"
                   type="file"
                   accept="audio/*"
-                  data-required-when="vox_controllable_clone vox_hifi_clone clone"
+                  data-required-when="vox_controllable_clone scene_dubbing vox_hifi_clone clone"
                 />
                 <span class="upload-icon" aria-hidden="true">↥</span>
                 <span class="upload-copy">
@@ -322,7 +325,7 @@
 
       <footer>
         <span>Simple TTS Studio</span>
-        <span>VoxCPM2 · Qwen3-TTS · Local-first</span>
+        <span>VoxCPM2 · Qwen3.5 · Qwen3-TTS · Local-first</span>
       </footer>
     </main>
       </div>
