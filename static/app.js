@@ -2,6 +2,17 @@ const form = document.querySelector("#tts-form");
 const modeInput = document.querySelector("#mode-select");
 const modeCards = Array.from(document.querySelectorAll("[data-mode-value]"));
 const modeNote = document.querySelector("#mode-note");
+const modeCategory = document.querySelector("#mode-category");
+const pageTitle = document.querySelector("#page-title");
+const viewPanels = Array.from(document.querySelectorAll("[data-view-panel]"));
+const resultsNav = document.querySelector("#results-nav");
+const resultsCount = document.querySelector("#results-count");
+const backToStudio = document.querySelector("#back-to-studio");
+const sidebar = document.querySelector("#app-sidebar");
+const sidebarOpen = document.querySelector("#sidebar-open");
+const sidebarClose = document.querySelector("#sidebar-close");
+const sidebarOverlay = document.querySelector("#sidebar-overlay");
+const sidebarMedia = window.matchMedia("(max-width: 1100px)");
 const voicePresetSelect = document.querySelector("#voice-preset-select");
 const voicePresetNote = document.querySelector("#voice-preset-note");
 const refAudioInput = document.querySelector("#ref-audio-input");
@@ -15,22 +26,23 @@ const readinessText = document.querySelector("#readiness-text");
 const submitButton = document.querySelector("#submit-button");
 const buttonLabel = submitButton.querySelector(".button-label");
 const message = document.querySelector("#message");
-const resultsPanel = document.querySelector("#results");
 const emptyResults = document.querySelector("#empty-results");
 const resultList = document.querySelector("#result-list");
 const resultStatus = document.querySelector("#result-status");
 const clearResults = document.querySelector("#clear-results");
 const themeToggle = document.querySelector("#theme-toggle");
 const toast = document.querySelector("#toast");
-const cloneModes = ["vox_controllable_clone", "vox_hifi_clone", "clone"];
+const cloneModes = ["vox_controllable_clone", "scene_dubbing", "vox_hifi_clone", "clone"];
 
 let voicePresets = [];
 let activePresetName = "";
 let manualRefText = "";
 let toastTimer;
+let currentView = "studio";
 
 const modeNotes = {
   vox_controllable_clone: "推荐入门使用。上传一段参考音频保留音色，再用自然语言控制情绪、节奏与表达方式。",
+  scene_dubbing: "Qwen3.5 会逐行理解文本情景并自动设计情绪与表达，再由 VoxCPM2 使用指定音色完成配音。",
   vox_design: "不需要参考音频。描述你想要的声音与语气，VoxCPM2 会直接生成一个新的表达。",
   vox_hifi_clone: "适合更看重音色相似度的场景。需要参考音频及逐字文本，此模式不使用语气描述。",
   clone: "使用 Qwen3-TTS Base 忠实克隆参考音频。表达方式主要来自参考音频本身。",
@@ -38,17 +50,28 @@ const modeNotes = {
   voice_design_then_clone: "先生成一段符合描述的风格参考音频，再把它复用到多行文本，保持批量输出一致。",
 };
 
+const modeMeta = {
+  vox_controllable_clone: { title: "可控克隆", category: "声音克隆 · VOXCPM2" },
+  scene_dubbing: { title: "情景配音", category: "智能配音 · QWEN3.5 + VOXCPM2" },
+  vox_design: { title: "语音设计", category: "声音设计 · VOXCPM2" },
+  vox_hifi_clone: { title: "Hi-Fi 克隆", category: "声音克隆 · VOXCPM2" },
+  clone: { title: "参考音频克隆", category: "声音克隆 · QWEN3-TTS" },
+  voice_design: { title: "语气设计", category: "声音设计 · QWEN3-TTS" },
+  voice_design_then_clone: { title: "设计后复用", category: "声音设计 · QWEN3-TTS" },
+};
+
 const visibility = {
-  reference_audio: ["vox_controllable_clone", "vox_hifi_clone", "clone"],
+  reference_audio: ["vox_controllable_clone", "scene_dubbing", "vox_hifi_clone", "clone"],
   voice_preset: cloneModes,
   reference_text: ["vox_hifi_clone", "clone"],
   style: ["vox_controllable_clone", "vox_design", "voice_design", "voice_design_then_clone"],
   voice_design_then_clone: ["voice_design_then_clone"],
-  vox_params: ["vox_controllable_clone", "vox_design", "vox_hifi_clone"],
+  vox_params: ["vox_controllable_clone", "scene_dubbing", "vox_design", "vox_hifi_clone"],
 };
 
 initializeTheme();
 bindEvents();
+syncSidebarState();
 loadVoicePresets();
 updateModeUI();
 updateTextStats();
@@ -58,8 +81,25 @@ function bindEvents() {
     card.addEventListener("click", () => {
       modeInput.value = card.dataset.modeValue;
       updateModeUI();
+      showView("studio");
+      closeSidebar(true);
     });
   }
+
+  resultsNav.addEventListener("click", () => {
+    showView("results");
+    closeSidebar(true);
+  });
+  backToStudio.addEventListener("click", () => showView("studio"));
+  sidebarOpen.addEventListener("click", openSidebar);
+  sidebarClose.addEventListener("click", () => closeSidebar(true));
+  sidebarOverlay.addEventListener("click", () => closeSidebar(true));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.body.classList.contains("is-sidebar-open")) {
+      closeSidebar(true);
+    }
+  });
+  sidebarMedia.addEventListener("change", syncSidebarState);
 
   voicePresetSelect.addEventListener("change", applyPresetSelection);
   refAudioInput.addEventListener("change", updateUploadState);
@@ -105,9 +145,12 @@ async function handleSubmit(event) {
   setLoading(true);
   setResultState("loading", "正在生成");
   message.className = "message";
-  message.textContent = "模型正在准备并生成音频。首次使用可能还需要下载权重，请保持页面开启。";
+  message.textContent = modeInput.value === "scene_dubbing"
+    ? "Qwen3.5 正在逐行分析情绪，随后将由 VoxCPM2 生成音频。首次使用需要下载模型，请保持页面开启。"
+    : "模型正在准备并生成音频。首次使用可能还需要下载权重，请保持页面开启。";
   emptyResults.hidden = true;
   resultList.replaceChildren();
+  updateResultsCount(0);
   clearResults.hidden = true;
 
   try {
@@ -121,13 +164,17 @@ async function handleSubmit(event) {
     }
 
     renderSuccessMessage(payload);
+    const analysesByIndex = new Map(
+      (payload.emotion_analyses || []).map((analysis) => [analysis.index, analysis]),
+    );
     payload.items.forEach((item, index) => {
-      resultList.appendChild(renderResult(item, index));
+      resultList.appendChild(renderResult(item, index, analysesByIndex.get(item.index)));
     });
+    updateResultsCount(payload.items.length);
     setResultState("success", "生成完成");
     clearResults.hidden = false;
     showToast("已生成 " + payload.items.length + " 个音频");
-    resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    showView("results");
   } catch (error) {
     message.className = "message is-error";
     message.textContent = error instanceof Error ? error.message : "生成失败，请稍后重试。";
@@ -167,7 +214,7 @@ function renderSuccessMessage(payload) {
   message.replaceChildren(summary, copyButton);
 }
 
-function renderResult(item, animationIndex) {
+function renderResult(item, animationIndex, emotionAnalysis) {
   const wrapper = document.createElement("article");
   wrapper.className = "result-item";
   wrapper.style.animationDelay = String(animationIndex * 55) + "ms";
@@ -185,6 +232,16 @@ function renderResult(item, animationIndex) {
   const text = document.createElement("p");
   text.textContent = item.text;
   copy.append(title, text);
+  if (emotionAnalysis) {
+    const emotion = document.createElement("p");
+    emotion.className = "result-emotion";
+    const label = document.createElement("strong");
+    label.textContent = "情绪分析";
+    const instruction = document.createElement("span");
+    instruction.textContent = emotionAnalysis.instruction;
+    emotion.append(label, instruction);
+    copy.append(emotion);
+  }
   details.append(index, copy);
 
   const player = document.createElement("div");
@@ -210,13 +267,20 @@ function renderResult(item, animationIndex) {
 
 function updateModeUI() {
   const mode = modeInput.value;
+  const meta = modeMeta[mode];
   const selectedPreset = cloneModes.includes(mode) ? getSelectedVoicePreset() : null;
   modeNote.textContent = modeNotes[mode];
+  pageTitle.textContent = meta.title;
+  modeCategory.textContent = meta.category;
 
   for (const card of modeCards) {
     const isActive = card.dataset.modeValue === mode;
     card.classList.toggle("is-active", isActive);
-    card.setAttribute("aria-pressed", String(isActive));
+    if (isActive && currentView === "studio") {
+      card.setAttribute("aria-current", "page");
+    } else {
+      card.removeAttribute("aria-current");
+    }
   }
 
   for (const group of document.querySelectorAll("[data-mode-group]")) {
@@ -368,7 +432,9 @@ function clearAllInvalidStates() {
 function setLoading(isLoading) {
   submitButton.disabled = isLoading;
   submitButton.classList.toggle("is-loading", isLoading);
-  buttonLabel.textContent = isLoading ? "正在生成，请稍候" : "开始生成";
+  buttonLabel.textContent = isLoading
+    ? modeInput.value === "scene_dubbing" ? "正在分析并生成" : "正在生成，请稍候"
+    : "开始生成";
 }
 
 function setResultState(state, label) {
@@ -380,6 +446,7 @@ function resetResults() {
   resultList.replaceChildren();
   emptyResults.hidden = false;
   clearResults.hidden = true;
+  updateResultsCount(0);
   message.className = "message";
   message.textContent = "完成设置并开始生成，你的音频会出现在这里。";
   setResultState("idle", "等待生成");
@@ -450,8 +517,73 @@ function toggleTheme() {
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   const icon = themeToggle.querySelector(".theme-icon");
+  const label = themeToggle.querySelector(".theme-label");
   icon.textContent = theme === "dark" ? "☀" : "◐";
+  if (label) {
+    label.textContent = theme === "dark" ? "切换浅色主题" : "切换深色主题";
+  }
   themeToggle.setAttribute("aria-label", theme === "dark" ? "切换到浅色主题" : "切换到深色主题");
+}
+
+function showView(view) {
+  currentView = view;
+  for (const panel of viewPanels) {
+    panel.hidden = panel.dataset.viewPanel !== view;
+  }
+
+  const showingResults = view === "results";
+  resultsNav.classList.toggle("is-active", showingResults);
+  if (showingResults) {
+    resultsNav.setAttribute("aria-current", "page");
+  } else {
+    resultsNav.removeAttribute("aria-current");
+  }
+
+  for (const card of modeCards) {
+    const isCurrentMode = card.dataset.modeValue === modeInput.value && !showingResults;
+    card.classList.toggle("is-active", isCurrentMode);
+    if (isCurrentMode) {
+      card.setAttribute("aria-current", "page");
+    } else {
+      card.removeAttribute("aria-current");
+    }
+  }
+
+  const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  window.scrollTo({ top: 0, behavior });
+}
+
+function updateResultsCount(count) {
+  resultsCount.textContent = String(count);
+  resultsCount.hidden = count === 0;
+}
+
+function openSidebar() {
+  document.body.classList.add("is-sidebar-open");
+  sidebarOpen.setAttribute("aria-expanded", "true");
+  sidebar.setAttribute("aria-hidden", "false");
+  sidebar.inert = false;
+  const activeItem = sidebar.querySelector(".nav-item.is-active") || sidebarClose;
+  activeItem.focus();
+}
+
+function closeSidebar(restoreFocus = false) {
+  document.body.classList.remove("is-sidebar-open");
+  sidebarOpen.setAttribute("aria-expanded", "false");
+  if (sidebarMedia.matches) {
+    sidebar.setAttribute("aria-hidden", "true");
+    sidebar.inert = true;
+  } else {
+    sidebar.removeAttribute("aria-hidden");
+    sidebar.inert = false;
+  }
+  if (restoreFocus && sidebarMedia.matches) {
+    sidebarOpen.focus();
+  }
+}
+
+function syncSidebarState() {
+  closeSidebar(false);
 }
 
 function showToast(text) {

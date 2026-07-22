@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -11,9 +12,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
+from .logging_config import configure_application_logging
 from .settings import BASE_DIR, OUTPUT_DIR, ROLE_DIR, UPLOAD_DIR
 from .tts import (
     MODE_CLONE,
+    MODE_SCENE_DUBBING,
     MODE_VOX_CONTROLLABLE_CLONE,
     MODE_VOX_DESIGN,
     MODE_VOX_HIFI_CLONE,
@@ -25,6 +28,7 @@ from .tts import (
 from .voice_presets import VoicePreset, find_voice_preset, load_voice_presets
 
 
+configure_application_logging()
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Simple Qwen3-TTS Workflow")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -35,6 +39,38 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ROLE_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
+logger.info(
+    "Application initialized: base_dir=%s output_dir=%s role_dir=%s upload_dir=%s",
+    BASE_DIR,
+    OUTPUT_DIR,
+    ROLE_DIR,
+    UPLOAD_DIR,
+)
+
+
+@app.middleware("http")
+async def log_http_request(request: Request, call_next):
+    started_at = time.perf_counter()
+    log = logger.debug if request.url.path.startswith(("/static/", "/outputs/")) else logger.info
+    log("HTTP request started: method=%s path=%s", request.method, request.url.path)
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "HTTP request failed: method=%s path=%s elapsed=%.2fs",
+            request.method,
+            request.url.path,
+            time.perf_counter() - started_at,
+        )
+        raise
+    log(
+        "HTTP request completed: method=%s path=%s status=%s elapsed=%.2fs",
+        request.method,
+        request.url.path,
+        response.status_code,
+        time.perf_counter() - started_at,
+    )
+    return response
 
 
 @app.get("/")
@@ -44,7 +80,13 @@ async def index(request: Request):
 
 @app.get("/api/voice-presets")
 async def voice_presets():
-    return JSONResponse({"presets": [preset.to_response() for preset in load_voice_presets(ROLE_DIR)]})
+    presets = load_voice_presets(ROLE_DIR)
+    logger.info(
+        "Voice presets loaded: count=%s names=%s",
+        len(presets),
+        [preset.name for preset in presets],
+    )
+    return JSONResponse({"presets": [preset.to_response() for preset in presets]})
 
 
 @app.post("/api/generate")
@@ -62,6 +104,7 @@ async def generate(
     normalize: bool = Form(False),
     denoise: bool = Form(False),
 ):
+    request_started_at = time.perf_counter()
     lines = split_text_lines(texts)
     if not lines:
         raise HTTPException(status_code=400, detail="At least one target text line is required.")
@@ -81,7 +124,7 @@ async def generate(
 
     try:
         preset = None
-        if mode in {MODE_VOX_CONTROLLABLE_CLONE, MODE_VOX_HIFI_CLONE, MODE_CLONE}:
+        if mode in {MODE_VOX_CONTROLLABLE_CLONE, MODE_SCENE_DUBBING, MODE_VOX_HIFI_CLONE, MODE_CLONE}:
             preset = _get_requested_preset(voice_preset)
         if mode == MODE_VOX_CONTROLLABLE_CLONE:
             ref_audio_path, _ = _resolve_reference_material(ref_audio, ref_text, preset, require_text=False)
@@ -89,6 +132,16 @@ async def generate(
                 ref_audio_path=ref_audio_path,
                 texts=lines,
                 style_instruction=emotion_instruction,
+                cfg_value=cfg_value,
+                inference_timesteps=inference_timesteps,
+                normalize=normalize,
+                denoise=denoise,
+            )
+        elif mode == MODE_SCENE_DUBBING:
+            ref_audio_path, _ = _resolve_reference_material(ref_audio, ref_text, preset, require_text=False)
+            result = service.generate_scene_dubbing(
+                ref_audio_path=ref_audio_path,
+                texts=lines,
                 cfg_value=cfg_value,
                 inference_timesteps=inference_timesteps,
                 normalize=normalize,
@@ -142,22 +195,35 @@ async def generate(
     except HTTPException:
         raise
     except ValueError as exc:
-        logger.warning("TTS request rejected: mode=%s error=%s", mode, exc)
+        logger.warning(
+            "TTS request rejected: mode=%s elapsed=%.2fs error=%s",
+            mode,
+            time.perf_counter() - request_started_at,
+            exc,
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("TTS generation failed: mode=%s", mode)
+        logger.exception(
+            "TTS generation failed: mode=%s elapsed=%.2fs",
+            mode,
+            time.perf_counter() - request_started_at,
+        )
         raise HTTPException(status_code=500, detail=f"TTS generation failed: {exc}") from exc
 
     logger.info(
-        "TTS request completed: mode=%s outputs=%s output_dir=%s",
+        "TTS request completed: mode=%s outputs=%s output_dir=%s elapsed=%.2fs",
         mode,
         len(result.items),
         result.output_dir,
+        time.perf_counter() - request_started_at,
     )
     return JSONResponse(
         {
             "output_dir": result.output_dir,
             "items": [item.__dict__ for item in result.items],
+            "emotion_analyses": [
+                analysis.__dict__ for analysis in getattr(result, "emotion_analyses", [])
+            ],
         }
     )
 

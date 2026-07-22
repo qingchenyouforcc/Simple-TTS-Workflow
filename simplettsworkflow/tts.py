@@ -3,14 +3,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from importlib.util import find_spec
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import soundfile as sf
 
+from .emotion import EmotionAnalysis, EmotionAnalyzer
 from .model_download import resolve_huggingface_model
 from .settings import MODEL_ID, OUTPUT_DIR, VOICE_DESIGN_MODEL_ID, VOXCPM_MODEL_ID
 
@@ -21,6 +23,7 @@ ENGINE_VOXCPM = "voxcpm2"
 MODE_VOX_CONTROLLABLE_CLONE = "vox_controllable_clone"
 MODE_VOX_DESIGN = "vox_design"
 MODE_VOX_HIFI_CLONE = "vox_hifi_clone"
+MODE_SCENE_DUBBING = "scene_dubbing"
 MODE_CLONE = "clone"
 MODE_VOICE_DESIGN = "voice_design"
 MODE_VOICE_DESIGN_THEN_CLONE = "voice_design_then_clone"
@@ -39,6 +42,7 @@ class GeneratedAudio:
 class GenerationResult:
     output_dir: str
     items: list[GeneratedAudio]
+    emotion_analyses: list[EmotionAnalysis] = field(default_factory=list)
 
 
 class QwenTTSService:
@@ -48,6 +52,7 @@ class QwenTTSService:
         model_id: str | None = None,
         voice_design_model_id: str | None = None,
         voxcpm_model_id: str | None = None,
+        emotion_analyzer: EmotionAnalyzer | None = None,
     ) -> None:
         self.output_dir = output_dir
         self.model_id = model_id or os.getenv("QWEN_TTS_MODEL", MODEL_ID)
@@ -58,6 +63,7 @@ class QwenTTSService:
         self.voxcpm_model_id = voxcpm_model_id or os.getenv("VOXCPM_MODEL", VOXCPM_MODEL_ID)
         self._models: dict[str, Any] = {}
         self._voxcpm_model: Any | None = None
+        self.emotion_analyzer = emotion_analyzer or EmotionAnalyzer()
 
     def _load_model(self, model_id: str) -> Any:
         if model_id in self._models:
@@ -94,6 +100,7 @@ class QwenTTSService:
         else:
             kwargs.update({"device_map": "cpu", "dtype": torch.float32})
 
+        load_started_at = time.perf_counter()
         logger.info(
             "Loading Qwen model: model=%s local_path=%s kwargs=%s",
             model_id,
@@ -101,7 +108,11 @@ class QwenTTSService:
             _safe_kwargs(kwargs),
         )
         self._models[model_id] = Qwen3TTSModel.from_pretrained(model_path, **kwargs)
-        logger.info("Qwen model loaded: model=%s", model_id)
+        logger.info(
+            "Qwen model loaded: model=%s elapsed=%.2fs",
+            model_id,
+            time.perf_counter() - load_started_at,
+        )
         return self._models[model_id]
 
     def _load_clone_model(self) -> Any:
@@ -119,6 +130,7 @@ class QwenTTSService:
 
         load_denoiser = _env_bool("VOXCPM_LOAD_DENOISER", False)
         optimize = _env_bool("VOXCPM_OPTIMIZE", True)
+        load_started_at = time.perf_counter()
         logger.info(
             "Loading VoxCPM2 model: model=%s load_denoiser=%s optimize=%s",
             self.voxcpm_model_id,
@@ -133,7 +145,11 @@ class QwenTTSService:
             load_denoiser=load_denoiser,
             optimize=optimize,
         )
-        logger.info("VoxCPM2 model loaded: model=%s", self.voxcpm_model_id)
+        logger.info(
+            "VoxCPM2 model loaded: model=%s elapsed=%.2fs",
+            self.voxcpm_model_id,
+            time.perf_counter() - load_started_at,
+        )
         return self._voxcpm_model
 
     def generate_voice_clone(
@@ -263,6 +279,102 @@ class QwenTTSService:
         )
         logger.info("Vox controllable clone completed: outputs=%s output_dir=%s", len(items), output_run_dir)
         return GenerationResult(output_dir=str(output_run_dir), items=items)
+
+    def generate_scene_dubbing(
+        self,
+        *,
+        ref_audio_path: Path,
+        texts: list[str],
+        cfg_value: float = 2.0,
+        inference_timesteps: int = 10,
+        normalize: bool = False,
+        denoise: bool = False,
+    ) -> GenerationResult:
+        workflow_started_at = time.perf_counter()
+        clean_texts = _clean_texts(texts)
+        analysis_started_at = time.perf_counter()
+        logger.info(
+            "Scene dubbing emotion analysis started: lines=%s analyzer=%s",
+            len(clean_texts),
+            self.emotion_analyzer.model_id,
+        )
+        # EmotionAnalyzer releases its llama.cpp GPU context before returning,
+        # so VoxCPM2 never has to share persistent VRAM with the analysis model.
+        analyses = self.emotion_analyzer.analyze_lines(clean_texts)
+        logger.info(
+            "Scene dubbing emotion analysis completed: lines=%s elapsed=%.2fs",
+            len(analyses),
+            time.perf_counter() - analysis_started_at,
+        )
+
+        model = self._load_voxcpm_model()
+        output_run_dir = self._create_output_run_dir()
+        sample_rate = int(model.tts_model.sample_rate)
+        logger.info(
+            "Scene dubbing generation started: lines=%s ref_audio=%s cfg=%s steps=%s "
+            "normalize=%s denoise=%s output_dir=%s",
+            len(clean_texts),
+            ref_audio_path,
+            cfg_value,
+            inference_timesteps,
+            normalize,
+            denoise,
+            output_run_dir,
+        )
+
+        wavs = []
+        for analysis in analyses:
+            line_started_at = time.perf_counter()
+            logger.info(
+                "Scene dubbing line started: line=%s/%s instruction=%s text=%s",
+                analysis.index,
+                len(analyses),
+                _preview(analysis.instruction),
+                _preview(analysis.text),
+            )
+            wav = model.generate(
+                text=_apply_vox_control_prefix(analysis.text, analysis.instruction),
+                reference_wav_path=str(ref_audio_path),
+                cfg_value=cfg_value,
+                inference_timesteps=inference_timesteps,
+                normalize=normalize,
+                denoise=denoise,
+            )
+            wavs.append(wav)
+            logger.info(
+                "Scene dubbing line completed: line=%s/%s elapsed=%.2fs samples=%s",
+                analysis.index,
+                len(analyses),
+                time.perf_counter() - line_started_at,
+                len(wav),
+            )
+
+        items = self._write_audio_items(output_run_dir, clean_texts, wavs, sample_rate)
+        self._write_metadata(
+            output_run_dir=output_run_dir,
+            engine=ENGINE_VOXCPM,
+            mode=MODE_SCENE_DUBBING,
+            model_id=self.voxcpm_model_id,
+            ref_audio_path=ref_audio_path,
+            ref_text="",
+            language="Auto",
+            style_instruction=None,
+            items=items,
+            generation_params=_vox_generation_params(cfg_value, inference_timesteps, normalize, denoise),
+            emotion_analyses=analyses,
+            emotion_analysis_model=self.emotion_analyzer.model_id,
+        )
+        logger.info(
+            "Scene dubbing completed: outputs=%s output_dir=%s elapsed=%.2fs",
+            len(items),
+            output_run_dir,
+            time.perf_counter() - workflow_started_at,
+        )
+        return GenerationResult(
+            output_dir=str(output_run_dir),
+            items=items,
+            emotion_analyses=analyses,
+        )
 
     def generate_vox_design(
         self,
@@ -553,6 +665,8 @@ class QwenTTSService:
         style_instruction: str | None,
         items: list[GeneratedAudio],
         generation_params: dict[str, Any] | None = None,
+        emotion_analyses: list[EmotionAnalysis] | None = None,
+        emotion_analysis_model: str | None = None,
     ) -> None:
         metadata = {
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -568,6 +682,9 @@ class QwenTTSService:
         }
         if generation_params is not None:
             metadata.update(generation_params)
+        if emotion_analyses is not None:
+            metadata["emotion_analysis_model"] = emotion_analysis_model or ""
+            metadata["emotion_analyses"] = [analysis.__dict__ for analysis in emotion_analyses]
         metadata_path = output_run_dir / "metadata.json"
         metadata_path.write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2),

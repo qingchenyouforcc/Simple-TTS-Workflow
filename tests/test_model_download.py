@@ -5,6 +5,7 @@ import pytest
 from simplettsworkflow.model_download import (
     DEFAULT_HF_ENDPOINT,
     configure_huggingface_downloads,
+    resolve_huggingface_file,
     resolve_huggingface_model,
 )
 
@@ -64,6 +65,29 @@ def test_remote_model_is_downloaded_with_configured_endpoint(monkeypatch, tmp_pa
             "endpoint": "https://hub.example.test",
             "etag_timeout": 90,
             "max_workers": 2,
+            "local_files_only": False,
+        }
+    ]
+
+
+def test_single_model_file_download_only_requests_target(monkeypatch, tmp_path: Path) -> None:
+    calls = []
+    cached_file = tmp_path / "model.gguf"
+    monkeypatch.setenv("HF_ENDPOINT", "https://hub.example.test")
+    monkeypatch.setattr(
+        "huggingface_hub.hf_hub_download",
+        lambda **kwargs: calls.append(kwargs) or str(cached_file),
+    )
+
+    result = resolve_huggingface_file("owner/gguf", "model-Q4_K_M.gguf")
+
+    assert result == str(cached_file)
+    assert calls == [
+        {
+            "repo_id": "owner/gguf",
+            "filename": "model-Q4_K_M.gguf",
+            "endpoint": "https://hub.example.test",
+            "etag_timeout": 60,
             "local_files_only": False,
         }
     ]
