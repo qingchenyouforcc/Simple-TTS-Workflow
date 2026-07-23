@@ -1366,27 +1366,38 @@ textarea::placeholder {
 }
 
 .result-copy .result-emotion {
-  display: flex;
+  display: grid;
+  min-width: 0;
   margin-top: 8px;
-  gap: 7px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  column-gap: 8px;
   overflow: visible;
   color: var(--text);
   -webkit-line-clamp: initial;
 }
 
 .result-emotion strong {
-  flex: 0 0 auto;
+  display: inline-flex;
+  min-height: 24px;
   margin: 0;
   padding: 2px 6px;
+  align-items: center;
+  justify-content: center;
   border-radius: 999px;
   background: var(--primary-soft);
   color: var(--primary);
   font-size: 0.66rem;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .result-emotion span {
+  min-width: 0;
+  padding-top: 2px;
   color: var(--text-soft);
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .result-copy .result-guidance strong {
