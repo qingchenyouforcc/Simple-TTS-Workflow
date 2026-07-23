@@ -24,6 +24,9 @@ def test_index_renders_form() -> None:
     assert 'data-view-panel="results"' in response.text
     assert response.text.count("data-mode-value=") == 7
     assert 'data-mode-value="scene_dubbing"' in response.text
+    assert 'name="scene_dubbing_mode"' in response.text
+    assert 'data-scene-dubbing-mode="auto"' in response.text
+    assert 'data-scene-dubbing-mode="assisted"' in response.text
 
 
 def test_vox_controllable_clone_requires_reference_audio() -> None:
@@ -76,7 +79,103 @@ def test_scene_dubbing_uses_service_and_returns_analyses(monkeypatch, tmp_path: 
     )
 
     assert response.status_code == 200
-    assert response.json()["emotion_analyses"][0]["instruction"].startswith("开心明亮")
+    analysis = response.json()["emotion_analyses"][0]
+    assert analysis["instruction"].startswith("开心明亮")
+    assert analysis["description"] is None
+    assert analysis["keywords"] == []
+
+
+def test_assisted_scene_dubbing_parses_blocks_before_service_call(monkeypatch, tmp_path: Path) -> None:
+    class FakeResult:
+        output_dir = str(tmp_path)
+        items = [
+            SimpleNamespace(
+                index=1,
+                text="Alright, I should probably fix the filter first…",
+                filename="line_001.wav",
+                path=str(tmp_path / "line_001.wav"),
+                url="/outputs/run/line_001.wav",
+            )
+        ]
+        emotion_analyses = [
+            SimpleNamespace(
+                index=1,
+                text="Alright, I should probably fix the filter first…",
+                instruction="情绪：疲惫无奈；强度：中等；语速：稍慢；音高：偏低；音量：适中；节奏与停顿：句尾停顿。",
+                description="体现疲惫与无奈，但保持稳定，不破音。",
+                keywords=("疲惫", "无奈", "认命"),
+            )
+        ]
+
+    def fake_generate_scene_dubbing(**kwargs):
+        assert kwargs["scene_dubbing_mode"] == "assisted"
+        assert kwargs["texts"] == ["Alright, I should probably fix the filter first…"]
+        assisted = kwargs["assisted_inputs"]
+        assert assisted[0].description == "体现疲惫与无奈，但保持稳定，不破音。"
+        assert assisted[0].keywords == ("疲惫", "无奈", "认命")
+        return FakeResult()
+
+    monkeypatch.setattr("simplettsworkflow.app.service.generate_scene_dubbing", fake_generate_scene_dubbing)
+    response = client.post(
+        "/api/generate",
+        data={
+            "mode": "scene_dubbing",
+            "scene_dubbing_mode": "assisted",
+            "texts": (
+                "Alright, I should probably fix the filter first…\n"
+                "体现疲惫与无奈，但保持稳定，不破音。\n"
+                "keyword：疲惫，无奈，认命"
+            ),
+        },
+        files={"ref_audio": ("ref.wav", b"audio", "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["emotion_analyses"][0]["keywords"] == ["疲惫", "无奈", "认命"]
+
+
+def test_assisted_scene_dubbing_rejects_format_before_upload_or_service(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "simplettsworkflow.app._save_upload",
+        lambda upload: (_ for _ in ()).throw(AssertionError("upload must not be saved")),
+    )
+    monkeypatch.setattr(
+        "simplettsworkflow.app.service.generate_scene_dubbing",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("service must not be called")),
+    )
+
+    response = client.post(
+        "/api/generate",
+        data={
+            "mode": "scene_dubbing",
+            "scene_dubbing_mode": "assisted",
+            "texts": "原句\n只有描述",
+        },
+        files={"ref_audio": ("ref.wav", b"audio", "audio/wav")},
+    )
+
+    assert response.status_code == 400
+    assert "第 1 个辅助条目格式错误" in response.json()["detail"]
+
+
+def test_scene_dubbing_rejects_unknown_submode_before_service(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "simplettsworkflow.app.service.generate_scene_dubbing",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("service must not be called")),
+    )
+
+    response = client.post(
+        "/api/generate",
+        data={
+            "mode": "scene_dubbing",
+            "scene_dubbing_mode": "unknown",
+            "texts": "原句",
+        },
+        files={"ref_audio": ("ref.wav", b"audio", "audio/wav")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unsupported scene dubbing mode: unknown"
 
 
 def test_clone_generate_requires_target_text() -> None:
@@ -318,12 +417,57 @@ def test_scene_dubbing_uses_voice_preset_without_upload(monkeypatch, tmp_path: P
 
     def fake_generate_scene_dubbing(**kwargs):
         assert kwargs["ref_audio_path"] == preset_audio.resolve()
+        assert kwargs["scene_dubbing_mode"] == "auto"
         return FakeResult()
 
     monkeypatch.setattr("simplettsworkflow.app.service.generate_scene_dubbing", fake_generate_scene_dubbing)
     response = client.post(
         "/api/generate",
         data={"mode": "scene_dubbing", "voice_preset": "Narrator", "texts": "情景文本"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_assisted_scene_dubbing_uses_voice_preset_without_upload(monkeypatch, tmp_path: Path) -> None:
+    preset_dir = tmp_path / "narrator"
+    preset_dir.mkdir()
+    preset_audio = preset_dir / "narrator.wav"
+    preset_audio.write_bytes(b"audio")
+    (preset_dir / "preset.json").write_text(
+        '{"name": "Narrator", "reference": "narrator.wav", "reference_text": "preset transcript"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("simplettsworkflow.app.ROLE_DIR", tmp_path)
+
+    class FakeResult:
+        output_dir = str(tmp_path)
+        items = [
+            SimpleNamespace(
+                index=1,
+                text="原句",
+                filename="line_001.wav",
+                path=str(tmp_path / "line_001.wav"),
+                url="/outputs/run/line_001.wav",
+            )
+        ]
+        emotion_analyses = []
+
+    def fake_generate_scene_dubbing(**kwargs):
+        assert kwargs["ref_audio_path"] == preset_audio.resolve()
+        assert kwargs["scene_dubbing_mode"] == "assisted"
+        assert kwargs["assisted_inputs"][0].keywords == ("疲惫", "无奈")
+        return FakeResult()
+
+    monkeypatch.setattr("simplettsworkflow.app.service.generate_scene_dubbing", fake_generate_scene_dubbing)
+    response = client.post(
+        "/api/generate",
+        data={
+            "mode": "scene_dubbing",
+            "scene_dubbing_mode": "assisted",
+            "voice_preset": "Narrator",
+            "texts": "原句\n体现疲惫与无奈。\nkeyword：疲惫，无奈",
+        },
     )
 
     assert response.status_code == 200

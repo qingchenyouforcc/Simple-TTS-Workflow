@@ -3,8 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from simplettsworkflow.tts import QwenTTSService, split_text_lines
-from simplettsworkflow.emotion import EmotionAnalysis
+from simplettsworkflow.tts import (
+    QwenTTSService,
+    SCENE_DUBBING_MODE_ASSISTED,
+    split_text_lines,
+)
+from simplettsworkflow.emotion import AssistedSceneInput, EmotionAnalysis
 
 
 class FakeModel:
@@ -280,7 +284,10 @@ def test_scene_dubbing_analyzes_before_loading_vox_and_writes_metadata(monkeypat
 
     metadata = json.loads((Path(result.output_dir) / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["mode"] == "scene_dubbing"
+    assert metadata["scene_dubbing_mode"] == "auto"
     assert metadata["emotion_analysis_model"] == "local/emotion-Q4_K_M.gguf"
+    assert metadata["emotion_analyses"][0]["description"] is None
+    assert metadata["emotion_analyses"][0]["keywords"] == []
     assert metadata["emotion_analyses"][1]["instruction"].startswith("悲伤克制")
 
 
@@ -302,6 +309,89 @@ def test_scene_dubbing_analysis_failure_does_not_load_vox(monkeypatch, tmp_path:
         service.generate_scene_dubbing(
             ref_audio_path=tmp_path / "voice.wav",
             texts=["hello"],
+        )
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_assisted_scene_dubbing_uses_guidance_and_writes_mode_metadata(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    events = []
+    assisted_inputs = [
+        AssistedSceneInput(
+            index=1,
+            text="Alright, I should probably fix the filter first…",
+            description="体现疲惫与无奈，但保持稳定，不破音。",
+            keywords=("疲惫", "无奈", "认命"),
+        )
+    ]
+
+    class FakeAnalyzer:
+        model_id = "local/emotion.gguf"
+
+        def analyze_assisted(self, items):
+            events.append(("analyze_assisted", list(items)))
+            item = items[0]
+            return [
+                EmotionAnalysis(
+                    index=item.index,
+                    text=item.text,
+                    instruction=(
+                        "情绪：疲惫无奈；强度：中等；语速：稍慢；音高：偏低；"
+                        "音量：适中；节奏与停顿：句尾稍作停顿。"
+                    ),
+                    description=item.description,
+                    keywords=item.keywords,
+                )
+            ]
+
+    fake_model = FakeVoxModel()
+    service = QwenTTSService(output_dir=tmp_path, emotion_analyzer=FakeAnalyzer())
+
+    def load_vox():
+        events.append(("load_vox", None))
+        return fake_model
+
+    monkeypatch.setattr(service, "_load_voxcpm_model", load_vox)
+    monkeypatch.setattr("simplettsworkflow.tts.sf.write", lambda path, wav, sr: None)
+
+    result = service.generate_scene_dubbing(
+        ref_audio_path=tmp_path / "voice.wav",
+        texts=[assisted_inputs[0].text],
+        scene_dubbing_mode=SCENE_DUBBING_MODE_ASSISTED,
+        assisted_inputs=assisted_inputs,
+    )
+
+    assert [event[0] for event in events] == ["analyze_assisted", "load_vox"]
+    assert fake_model.generate_calls[0]["text"].endswith(assisted_inputs[0].text)
+    assert "体现疲惫与无奈" not in fake_model.generate_calls[0]["text"]
+    assert result.items[0].text == assisted_inputs[0].text
+
+    metadata = json.loads((Path(result.output_dir) / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["scene_dubbing_mode"] == "assisted"
+    assert metadata["emotion_analyses"][0]["description"] == assisted_inputs[0].description
+    assert metadata["emotion_analyses"][0]["keywords"] == ["疲惫", "无奈", "认命"]
+
+
+def test_assisted_scene_dubbing_requires_parsed_items_before_loading_models(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    service = QwenTTSService(output_dir=tmp_path)
+    monkeypatch.setattr(
+        service,
+        "_load_voxcpm_model",
+        lambda: pytest.fail("VoxCPM2 must not load without assisted items"),
+    )
+
+    with pytest.raises(ValueError, match="At least one assisted scene item"):
+        service.generate_scene_dubbing(
+            ref_audio_path=tmp_path / "voice.wav",
+            texts=[],
+            scene_dubbing_mode=SCENE_DUBBING_MODE_ASSISTED,
+            assisted_inputs=[],
         )
 
     assert list(tmp_path.iterdir()) == []
