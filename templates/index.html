@@ -227,8 +227,38 @@
               </div>
             </div>
 
+            <input id="scene-dubbing-mode" name="scene_dubbing_mode" type="hidden" value="auto" />
+            <div class="scene-mode-panel" data-mode-group="scene_dubbing" hidden>
+              <div class="subheading">
+                <h3>情绪分析方式</h3>
+                <span>切换时不会清空文本</span>
+              </div>
+              <div class="scene-mode-switch" role="group" aria-label="情景配音分析方式">
+                <button
+                  class="is-active"
+                  type="button"
+                  data-scene-dubbing-mode="auto"
+                  aria-pressed="true"
+                >
+                  <strong>自识别模式</strong>
+                  <small>Qwen 自动理解原句</small>
+                </button>
+                <button
+                  type="button"
+                  data-scene-dubbing-mode="assisted"
+                  aria-pressed="false"
+                >
+                  <strong>提示词辅助模式</strong>
+                  <small>结合描述与关键词</small>
+                </button>
+              </div>
+              <p id="scene-mode-help" class="field-help">
+                每个非空行作为一条原句，由 Qwen 自动识别情绪和表达方式。
+              </p>
+            </div>
+
             <label class="field target-field">
-              <span class="field-label">目标文本 <b>必填</b></span>
+              <span class="field-label"><span id="target-label-text">目标文本</span> <b>必填</b></span>
               <span class="textarea-wrap">
                 <textarea
                   id="target-texts"
@@ -263,9 +293,9 @@
                   </select>
                 </span>
               </label>
-              <div class="batch-tip">
+              <div class="batch-tip" id="batch-tip">
                 <span aria-hidden="true">≋</span>
-                <p><strong>批量生成</strong>每个非空行会输出一个 WAV 文件。</p>
+                <p id="batch-tip-text"><strong>批量生成</strong>每个非空行会输出一个 WAV 文件。</p>
               </div>
             </div>
 

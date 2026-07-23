@@ -872,6 +872,76 @@ textarea::placeholder {
   margin-top: 27px;
 }
 
+.scene-mode-panel {
+  margin-top: 24px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--surface-soft) 68%, transparent);
+}
+
+.scene-mode-panel .subheading {
+  margin-bottom: 10px;
+}
+
+.scene-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.scene-mode-switch button {
+  display: flex;
+  min-width: 0;
+  padding: 10px 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-soft);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.scene-mode-switch button:hover {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.scene-mode-switch button.is-active {
+  border-color: color-mix(in oklch, var(--primary) 28%, var(--border));
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.scene-mode-switch button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.scene-mode-switch strong {
+  font-size: 0.76rem;
+}
+
+.scene-mode-switch small {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-mode-panel + .target-field {
+  margin-top: 18px;
+}
+
 .textarea-wrap {
   position: relative;
   display: block;
@@ -1317,6 +1387,11 @@ textarea::placeholder {
 .result-emotion span {
   color: var(--text-soft);
   line-height: 1.55;
+}
+
+.result-copy .result-guidance strong {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .result-player {

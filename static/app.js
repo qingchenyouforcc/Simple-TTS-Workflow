@@ -19,8 +19,13 @@ const refAudioInput = document.querySelector("#ref-audio-input");
 const uploadField = document.querySelector(".upload-field");
 const fileName = document.querySelector("#file-name");
 const targetTexts = document.querySelector("#target-texts");
+const targetLabelText = document.querySelector("#target-label-text");
 const lineCount = document.querySelector("#line-count");
 const charCount = document.querySelector("#char-count");
+const sceneDubbingModeInput = document.querySelector("#scene-dubbing-mode");
+const sceneDubbingModeButtons = Array.from(document.querySelectorAll("[data-scene-dubbing-mode]"));
+const sceneModeHelp = document.querySelector("#scene-mode-help");
+const batchTipText = document.querySelector("#batch-tip-text");
 const readiness = document.querySelector(".generation-readiness");
 const readinessText = document.querySelector("#readiness-text");
 const submitButton = document.querySelector("#submit-button");
@@ -42,7 +47,7 @@ let currentView = "studio";
 
 const modeNotes = {
   vox_controllable_clone: "推荐入门使用。上传一段参考音频保留音色，再用自然语言控制情绪、节奏与表达方式。",
-  scene_dubbing: "Qwen3.5 会逐行理解文本情景并自动设计情绪与表达，再由 VoxCPM2 使用指定音色完成配音。",
+  scene_dubbing: "Qwen3.5 会理解文本情景并设计情绪与表达，再由 VoxCPM2 使用指定音色完成配音。",
   vox_design: "不需要参考音频。描述你想要的声音与语气，VoxCPM2 会直接生成一个新的表达。",
   vox_hifi_clone: "适合更看重音色相似度的场景。需要参考音频及逐字文本，此模式不使用语气描述。",
   clone: "使用 Qwen3-TTS Base 忠实克隆参考音频。表达方式主要来自参考音频本身。",
@@ -108,6 +113,15 @@ function bindEvents() {
     clearInvalidState(targetTexts);
   });
 
+  for (const button of sceneDubbingModeButtons) {
+    button.addEventListener("click", () => {
+      sceneDubbingModeInput.value = button.dataset.sceneDubbingMode;
+      updateSceneDubbingUI();
+      updateTextStats();
+      clearInvalidState(targetTexts);
+    });
+  }
+
   for (const field of form.querySelectorAll("input, select, textarea")) {
     field.addEventListener("input", () => {
       clearInvalidState(field);
@@ -145,9 +159,13 @@ async function handleSubmit(event) {
   setLoading(true);
   setResultState("loading", "正在生成");
   message.className = "message";
-  message.textContent = modeInput.value === "scene_dubbing"
-    ? "Qwen3.5 正在逐行分析情绪，随后将由 VoxCPM2 生成音频。首次使用需要下载模型，请保持页面开启。"
-    : "模型正在准备并生成音频。首次使用可能还需要下载权重，请保持页面开启。";
+  if (modeInput.value === "scene_dubbing") {
+    message.textContent = isAssistedSceneMode()
+      ? "Qwen3.5 正在根据描述与关键词生成情绪指令，随后将由 VoxCPM2 完成配音。首次使用需要下载模型，请保持页面开启。"
+      : "Qwen3.5 正在自识别每行文本的情绪，随后将由 VoxCPM2 生成音频。首次使用需要下载模型，请保持页面开启。";
+  } else {
+    message.textContent = "模型正在准备并生成音频。首次使用可能还需要下载权重，请保持页面开启。";
+  }
   emptyResults.hidden = true;
   resultList.replaceChildren();
   updateResultsCount(0);
@@ -233,10 +251,27 @@ function renderResult(item, animationIndex, emotionAnalysis) {
   text.textContent = item.text;
   copy.append(title, text);
   if (emotionAnalysis) {
+    if (emotionAnalysis.description || (emotionAnalysis.keywords || []).length > 0) {
+      const guidance = document.createElement("p");
+      guidance.className = "result-emotion result-guidance";
+      const guidanceLabel = document.createElement("strong");
+      guidanceLabel.textContent = "辅助提示";
+      const guidanceText = document.createElement("span");
+      const guidanceParts = [];
+      if (emotionAnalysis.description) {
+        guidanceParts.push(emotionAnalysis.description);
+      }
+      if ((emotionAnalysis.keywords || []).length > 0) {
+        guidanceParts.push("关键词：" + emotionAnalysis.keywords.join("、"));
+      }
+      guidanceText.textContent = guidanceParts.join(" · ");
+      guidance.append(guidanceLabel, guidanceText);
+      copy.append(guidance);
+    }
     const emotion = document.createElement("p");
     emotion.className = "result-emotion";
     const label = document.createElement("strong");
-    label.textContent = "情绪分析";
+    label.textContent = emotionAnalysis.description ? "生成指令" : "情绪分析";
     const instruction = document.createElement("span");
     instruction.textContent = emotionAnalysis.instruction;
     emotion.append(label, instruction);
@@ -302,7 +337,9 @@ function updateModeUI() {
 
   const styleField = form.elements.emotion_instruction;
   styleField.disabled = mode === "vox_hifi_clone";
+  updateSceneDubbingUI();
   updateUploadState();
+  updateTextStats();
   updateReadiness();
 }
 
@@ -350,19 +387,120 @@ function updateUploadState() {
   }
 }
 
+function isAssistedSceneMode() {
+  return modeInput.value === "scene_dubbing" && sceneDubbingModeInput.value === "assisted";
+}
+
+function updateSceneDubbingUI() {
+  const assisted = isAssistedSceneMode();
+  for (const button of sceneDubbingModeButtons) {
+    const active = button.dataset.sceneDubbingMode === sceneDubbingModeInput.value;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+
+  if (modeInput.value !== "scene_dubbing") {
+    targetLabelText.textContent = "目标文本";
+    targetTexts.placeholder = "在这里输入要生成的内容…\n\n每一行会生成一个独立音频。";
+    replaceBatchTip("批量生成", "每个非空行会输出一个 WAV 文件。");
+    return;
+  }
+
+  if (assisted) {
+    modeNote.textContent = "为每条原句补充情感描述和关键词，Qwen3.5 会据此生成 VoxCPM2 所需的情感指令。";
+    targetLabelText.textContent = "原句与情绪提示";
+    targetTexts.placeholder = [
+      "Alright, I should probably fix the filter first…",
+      "体现疲惫与无奈，但保持稳定，不破音。",
+      "keyword：疲惫，无奈，认命，倦怠，无力，勉强接受",
+      "",
+      "多条内容之间请留一个空行。",
+    ].join("\n");
+    sceneModeHelp.textContent = "每个条目严格填写三行：原句、情感描述、keyword：关键词；多个条目之间用空行分隔。";
+    replaceBatchTip("三行一组", "每个有效条目会输出一个 WAV 文件。");
+  } else {
+    modeNote.textContent = "Qwen3.5 会逐行理解文本情景并自动设计情绪与表达，再由 VoxCPM2 使用指定音色完成配音。";
+    targetLabelText.textContent = "目标文本";
+    targetTexts.placeholder = "在这里输入要生成的内容…\n\n每一行会生成一个独立音频。";
+    sceneModeHelp.textContent = "每个非空行作为一条原句，由 Qwen 自动识别情绪和表达方式。";
+    replaceBatchTip("批量生成", "每个非空行会输出一个 WAV 文件。");
+  }
+}
+
+function replaceBatchTip(title, description) {
+  const strong = document.createElement("strong");
+  strong.textContent = title;
+  batchTipText.replaceChildren(strong, document.createTextNode(description));
+}
+
+function parseAssistedSceneBlocks(value) {
+  const normalized = value.replace(/\r\n?/g, "\n").trim();
+  if (!normalized) {
+    return { items: [], blockCount: 0, error: "请至少填写一个辅助配音条目。" };
+  }
+
+  const blocks = normalized.split(/\n(?:[ \t]*\n)+/);
+  const items = [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    const lines = blocks[index].split("\n").map((line) => line.trim()).filter(Boolean);
+    if (lines.length !== 3) {
+      return {
+        items,
+        blockCount: blocks.length,
+        error: "第 " + (index + 1) + " 个辅助条目必须包含原句、情感描述和 keyword 三行，当前为 " + lines.length + " 行。",
+      };
+    }
+    const keywordMatch = lines[2].match(/^keyword\s*[:：]\s*(.*)$/i);
+    if (!keywordMatch) {
+      return {
+        items,
+        blockCount: blocks.length,
+        error: "第 " + (index + 1) + " 个辅助条目的第三行必须使用 keyword：关键词 格式。",
+      };
+    }
+    const keywords = keywordMatch[1].split(/[,，、]/).map((keyword) => keyword.trim()).filter(Boolean);
+    if (keywords.length === 0) {
+      return {
+        items,
+        blockCount: blocks.length,
+        error: "第 " + (index + 1) + " 个辅助条目的 keyword 内容不能为空。",
+      };
+    }
+    items.push({
+      text: lines[0],
+      description: lines[1],
+      keywords,
+    });
+  }
+  return { items, blockCount: blocks.length, error: "" };
+}
+
+function getTargetEntryState() {
+  if (isAssistedSceneMode()) {
+    const parsed = parseAssistedSceneBlocks(targetTexts.value);
+    return {
+      count: parsed.blockCount,
+      valid: !parsed.error,
+      error: parsed.error,
+    };
+  }
+  const count = targetTexts.value
+    .split(String.fromCharCode(10))
+    .filter((line) => line.trim()).length;
+  return { count, valid: count > 0, error: "" };
+}
+
 function updateTextStats() {
   const value = targetTexts.value;
-  const lines = value.split(String.fromCharCode(10)).filter((line) => line.trim()).length;
+  const entryState = getTargetEntryState();
   const characters = Array.from(value).filter((character) => character.trim()).length;
-  lineCount.textContent = lines + " 行";
+  lineCount.textContent = entryState.count + (isAssistedSceneMode() ? " 条" : " 行");
   charCount.textContent = characters + " 字";
   updateReadiness();
 }
 
 function updateReadiness() {
-  const lineTotal = targetTexts.value
-    .split(String.fromCharCode(10))
-    .filter((line) => line.trim()).length;
+  const entryState = getTargetEntryState();
   const missingRequired = Array.from(form.querySelectorAll("[required]")).some((field) => {
     if (field.disabled || field.closest("[hidden]")) {
       return false;
@@ -372,11 +510,13 @@ function updateReadiness() {
     }
     return !field.value.trim();
   });
-  const isReady = lineTotal > 0 && !missingRequired;
+  const isReady = entryState.count > 0 && entryState.valid && !missingRequired;
   readiness.classList.toggle("is-ready", isReady);
   readinessText.textContent = isReady
-    ? "设置完成，将生成 " + lineTotal + " 个音频"
-    : "补全必填内容后即可生成";
+    ? "设置完成，将生成 " + entryState.count + " 个音频"
+    : entryState.count > 0 && entryState.error
+      ? entryState.error
+      : "补全必填内容后即可生成";
 }
 
 function validateForm() {
@@ -401,6 +541,15 @@ function validateForm() {
       markInvalid(field);
       showToast("生成参数超出有效范围");
       field.focus();
+      return false;
+    }
+  }
+  if (isAssistedSceneMode()) {
+    const parsed = parseAssistedSceneBlocks(targetTexts.value);
+    if (parsed.error) {
+      markInvalid(targetTexts);
+      showToast(parsed.error);
+      targetTexts.focus();
       return false;
     }
   }
@@ -432,9 +581,13 @@ function clearAllInvalidStates() {
 function setLoading(isLoading) {
   submitButton.disabled = isLoading;
   submitButton.classList.toggle("is-loading", isLoading);
-  buttonLabel.textContent = isLoading
-    ? modeInput.value === "scene_dubbing" ? "正在分析并生成" : "正在生成，请稍候"
-    : "开始生成";
+  if (!isLoading) {
+    buttonLabel.textContent = "开始生成";
+  } else if (modeInput.value !== "scene_dubbing") {
+    buttonLabel.textContent = "正在生成，请稍候";
+  } else {
+    buttonLabel.textContent = isAssistedSceneMode() ? "正在生成指令并配音" : "正在自识别并生成";
+  }
 }
 
 function setResultState(state, label) {
