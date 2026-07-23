@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
+from .emotion import AssistedSceneInput, parse_assisted_scene_blocks
 from .logging_config import configure_application_logging
 from .settings import BASE_DIR, OUTPUT_DIR, ROLE_DIR, UPLOAD_DIR
 from .tts import (
@@ -23,6 +24,8 @@ from .tts import (
     MODE_VOICE_DESIGN,
     MODE_VOICE_DESIGN_THEN_CLONE,
     QwenTTSService,
+    SCENE_DUBBING_MODE_ASSISTED,
+    SCENE_DUBBING_MODE_AUTO,
     split_text_lines,
 )
 from .voice_presets import VoicePreset, find_voice_preset, load_voice_presets
@@ -93,6 +96,7 @@ async def voice_presets():
 async def generate(
     ref_audio: UploadFile | None = File(None),
     mode: str = Form(MODE_VOX_CONTROLLABLE_CLONE),
+    scene_dubbing_mode: str = Form(SCENE_DUBBING_MODE_AUTO),
     voice_preset: str = Form(""),
     ref_text: str = Form(""),
     texts: str = Form(""),
@@ -105,13 +109,38 @@ async def generate(
     denoise: bool = Form(False),
 ):
     request_started_at = time.perf_counter()
-    lines = split_text_lines(texts)
+    assisted_inputs: list[AssistedSceneInput] | None = None
+    if mode == MODE_SCENE_DUBBING:
+        if scene_dubbing_mode not in {
+            SCENE_DUBBING_MODE_AUTO,
+            SCENE_DUBBING_MODE_ASSISTED,
+        }:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported scene dubbing mode: {scene_dubbing_mode}",
+            )
+        if scene_dubbing_mode == SCENE_DUBBING_MODE_ASSISTED:
+            try:
+                assisted_inputs = parse_assisted_scene_blocks(texts)
+            except ValueError as exc:
+                logger.warning(
+                    "Assisted scene input rejected before model or output setup: error=%s",
+                    exc,
+                )
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            lines = [item.text for item in assisted_inputs]
+        else:
+            lines = split_text_lines(texts)
+    else:
+        lines = split_text_lines(texts)
     if not lines:
         raise HTTPException(status_code=400, detail="At least one target text line is required.")
 
     logger.info(
-        "TTS request received: mode=%s lines=%s language=%s cfg=%s steps=%s normalize=%s denoise=%s has_ref_audio=%s has_style=%s",
+        "TTS request received: mode=%s scene_dubbing_mode=%s items=%s language=%s cfg=%s "
+        "steps=%s normalize=%s denoise=%s has_ref_audio=%s has_style=%s",
         mode,
+        scene_dubbing_mode if mode == MODE_SCENE_DUBBING else "",
         len(lines),
         language,
         cfg_value,
@@ -142,6 +171,8 @@ async def generate(
             result = service.generate_scene_dubbing(
                 ref_audio_path=ref_audio_path,
                 texts=lines,
+                scene_dubbing_mode=scene_dubbing_mode,
+                assisted_inputs=assisted_inputs,
                 cfg_value=cfg_value,
                 inference_timesteps=inference_timesteps,
                 normalize=normalize,
@@ -222,7 +253,8 @@ async def generate(
             "output_dir": result.output_dir,
             "items": [item.__dict__ for item in result.items],
             "emotion_analyses": [
-                analysis.__dict__ for analysis in getattr(result, "emotion_analyses", [])
+                _serialize_emotion_analysis(analysis)
+                for analysis in getattr(result, "emotion_analyses", [])
             ],
         }
     )
@@ -265,3 +297,13 @@ def _save_upload(upload: UploadFile) -> Path:
         shutil.copyfileobj(upload.file, file_obj)
     logger.info("Saved reference upload: filename=%s path=%s", upload.filename, destination)
     return destination
+
+
+def _serialize_emotion_analysis(analysis) -> dict:
+    return {
+        "index": analysis.index,
+        "text": analysis.text,
+        "instruction": analysis.instruction,
+        "description": getattr(analysis, "description", None),
+        "keywords": list(getattr(analysis, "keywords", ()) or ()),
+    }

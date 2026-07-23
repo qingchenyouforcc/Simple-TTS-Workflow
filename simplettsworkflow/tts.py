@@ -12,7 +12,7 @@ from typing import Any
 
 import soundfile as sf
 
-from .emotion import EmotionAnalysis, EmotionAnalyzer
+from .emotion import AssistedSceneInput, EmotionAnalysis, EmotionAnalyzer
 from .model_download import resolve_huggingface_model
 from .settings import MODEL_ID, OUTPUT_DIR, VOICE_DESIGN_MODEL_ID, VOXCPM_MODEL_ID
 
@@ -24,6 +24,8 @@ MODE_VOX_CONTROLLABLE_CLONE = "vox_controllable_clone"
 MODE_VOX_DESIGN = "vox_design"
 MODE_VOX_HIFI_CLONE = "vox_hifi_clone"
 MODE_SCENE_DUBBING = "scene_dubbing"
+SCENE_DUBBING_MODE_AUTO = "auto"
+SCENE_DUBBING_MODE_ASSISTED = "assisted"
 MODE_CLONE = "clone"
 MODE_VOICE_DESIGN = "voice_design"
 MODE_VOICE_DESIGN_THEN_CLONE = "voice_design_then_clone"
@@ -285,24 +287,42 @@ class QwenTTSService:
         *,
         ref_audio_path: Path,
         texts: list[str],
+        scene_dubbing_mode: str = SCENE_DUBBING_MODE_AUTO,
+        assisted_inputs: list[AssistedSceneInput] | None = None,
         cfg_value: float = 2.0,
         inference_timesteps: int = 10,
         normalize: bool = False,
         denoise: bool = False,
     ) -> GenerationResult:
         workflow_started_at = time.perf_counter()
-        clean_texts = _clean_texts(texts)
+        if scene_dubbing_mode == SCENE_DUBBING_MODE_AUTO:
+            clean_texts = _clean_texts(texts)
+            if assisted_inputs is not None:
+                raise ValueError("Assisted scene inputs are only valid in assisted mode.")
+        elif scene_dubbing_mode == SCENE_DUBBING_MODE_ASSISTED:
+            if not assisted_inputs:
+                raise ValueError("At least one assisted scene item is required.")
+            clean_texts = [item.text for item in assisted_inputs]
+        else:
+            raise ValueError(f"Unsupported scene dubbing mode: {scene_dubbing_mode}")
+
         analysis_started_at = time.perf_counter()
         logger.info(
-            "Scene dubbing emotion analysis started: lines=%s analyzer=%s",
+            "Scene dubbing emotion analysis started: mode=%s items=%s analyzer=%s",
+            scene_dubbing_mode,
             len(clean_texts),
             self.emotion_analyzer.model_id,
         )
         # EmotionAnalyzer releases its llama.cpp GPU context before returning,
         # so VoxCPM2 never has to share persistent VRAM with the analysis model.
-        analyses = self.emotion_analyzer.analyze_lines(clean_texts)
+        if scene_dubbing_mode == SCENE_DUBBING_MODE_ASSISTED:
+            analyses = self.emotion_analyzer.analyze_assisted(assisted_inputs)
+        else:
+            analyses = self.emotion_analyzer.analyze_lines(clean_texts)
         logger.info(
-            "Scene dubbing emotion analysis completed: lines=%s elapsed=%.2fs",
+            "Scene dubbing emotion analysis completed: mode=%s items=%s elapsed=%.2fs; "
+            "Qwen context released, handing off to VoxCPM2",
+            scene_dubbing_mode,
             len(analyses),
             time.perf_counter() - analysis_started_at,
         )
@@ -311,8 +331,9 @@ class QwenTTSService:
         output_run_dir = self._create_output_run_dir()
         sample_rate = int(model.tts_model.sample_rate)
         logger.info(
-            "Scene dubbing generation started: lines=%s ref_audio=%s cfg=%s steps=%s "
+            "Scene dubbing generation started: mode=%s items=%s ref_audio=%s cfg=%s steps=%s "
             "normalize=%s denoise=%s output_dir=%s",
+            scene_dubbing_mode,
             len(clean_texts),
             ref_audio_path,
             cfg_value,
@@ -363,9 +384,11 @@ class QwenTTSService:
             generation_params=_vox_generation_params(cfg_value, inference_timesteps, normalize, denoise),
             emotion_analyses=analyses,
             emotion_analysis_model=self.emotion_analyzer.model_id,
+            scene_dubbing_mode=scene_dubbing_mode,
         )
         logger.info(
-            "Scene dubbing completed: outputs=%s output_dir=%s elapsed=%.2fs",
+            "Scene dubbing completed: mode=%s outputs=%s output_dir=%s elapsed=%.2fs",
+            scene_dubbing_mode,
             len(items),
             output_run_dir,
             time.perf_counter() - workflow_started_at,
@@ -667,6 +690,7 @@ class QwenTTSService:
         generation_params: dict[str, Any] | None = None,
         emotion_analyses: list[EmotionAnalysis] | None = None,
         emotion_analysis_model: str | None = None,
+        scene_dubbing_mode: str | None = None,
     ) -> None:
         metadata = {
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -685,6 +709,8 @@ class QwenTTSService:
         if emotion_analyses is not None:
             metadata["emotion_analysis_model"] = emotion_analysis_model or ""
             metadata["emotion_analyses"] = [analysis.__dict__ for analysis in emotion_analyses]
+        if scene_dubbing_mode is not None:
+            metadata["scene_dubbing_mode"] = scene_dubbing_mode
         metadata_path = output_run_dir / "metadata.json"
         metadata_path.write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2),
