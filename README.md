@@ -1,51 +1,132 @@
-# Simple Qwen3-TTS Workflow
+# Simple TTS Workflow
 
-一个简单的本地 TTS Web 工作流：默认使用 VoxCPM2 进行可控声音克隆，支持由 Qwen3.5 自动分析情绪的“情景配音”，也保留 Qwen3-TTS 的 clone 与 VoiceDesign 流程。生成的 `.wav` 文件会保存到 `output/`。
+一个运行在本地的 TTS Web 工作流。项目以 **VoxCPM2 可控声音克隆**为默认入口，同时提供 **Qwen3.5 情绪分析 + VoxCPM2 情景配音**、VoxCPM2 声音设计与 Hi-Fi 克隆，以及 Qwen3-TTS 的声音克隆和 VoiceDesign 流程。
 
-## 环境
+输入多行文本后，程序会为每个非空行生成一个独立的 `.wav` 文件，并把本次任务的参数、参考素材和情绪分析结果写入 `metadata.json`。
 
-Qwen3-TTS 会先把完整模型下载到 Hugging Face 本地缓存，再从本地快照加载。这样 Transformers 在检查可选的 custom generation 代码时只访问本地文件，不会在模型加载阶段反复发送 HEAD 请求。
+## 当前功能
 
-- Python 3.12
-- 建议使用 NVIDIA GPU。CPU 可以尝试运行，但 1.7B 模型会很慢。
-- 首次运行会下载所选模型权重。VoxCPM2 默认模型是 `openbmb/VoxCPM2`，Qwen3-TTS 默认模型是 `Qwen/Qwen3-TTS-12Hz-1.7B-Base`。
+- 7 种生成模式，覆盖声音克隆、情景配音和声音设计。
+- 支持批量生成、网页试听、单文件下载和深色模式。
+- 支持从 `role/` 加载本地声音预设，也可以临时上传参考音频。
+- 情景配音支持自动识别和提示词辅助两种分析方式。
+- 模型按需加载；启动 Web 服务本身不会立即下载模型。
+- Hugging Face 下载支持镜像、失败重试、官方源回退和离线缓存。
+- 输出按任务分目录保存，并记录可追溯的 JSON 元数据。
 
-## 安装
+## 运行环境
+
+- Python `3.12`（项目限制为 `>=3.12,<3.13`）
+- 推荐 Windows + NVIDIA GPU；CPU 可以运行 Qwen3-TTS，但 1.7B 模型生成会很慢
+- 首次使用某个流程时，需要下载对应模型并占用相应磁盘空间
+
+当前 `uv.lock` 锁定了以下硬件相关构建：
+
+- PyTorch `2.10.0+cu130`
+- `llama-cpp-python 0.3.34` Vulkan wheel
+- VoxCPM `2.0.2`
+- Qwen TTS `0.1.1`
+
+因此，仓库中的默认 `uv sync` 更适合已经具备可用 NVIDIA 驱动和 Vulkan 环境的 Windows 机器。若需要 CPU、其他 CUDA 版本或其他操作系统，请根据目标环境调整 `pyproject.toml` 中的包源并重新生成锁文件。
+
+## 安装与启动
+
+推荐使用 [uv](https://docs.astral.sh/uv/)：
 
 ```powershell
 uv sync
+uv run python main.py
 ```
 
-如果你已经有合适的 Python 3.12 环境，也可以使用：
-
-```powershell
-pip install -e .
-```
-
-## 启动
+也可以直接启动 Uvicorn：
 
 ```powershell
 uv run uvicorn simplettsworkflow.app:app --host 127.0.0.1 --port 8000
 ```
 
-然后打开 <http://127.0.0.1:8000>。
+启动后打开 <http://127.0.0.1:8000>。
 
-也可以运行：
+已有合适 Python 3.12 环境时，也可以执行：
 
 ```powershell
-uv run python main.py
+pip install -e .
+python main.py
 ```
 
-## 使用流程
+> `pip install -e .` 不使用 `uv.lock`，最终安装的硬件相关 wheel 可能与仓库锁定环境不同。
 
-1. 选择生成模式，默认是 `VoxCPM2 / 可控克隆`。
-2. 输入一行或多行目标文本，每一行会生成一个独立音频文件。
-3. 根据模式填写参考音频、参考文本或情绪/语气描述。
-4. 生成结果默认保存在 `output/YYYYMMDD-HHMMSS/`。
+## 快速使用
 
-## 语音 Clone 预设
+1. 在左侧选择生成模式；默认是“可控克隆”。
+2. 需要声音来源时，选择 `role/` 中的预设或上传参考音频。
+3. 填写目标文本。普通模式下，每个非空行生成一个音频。
+4. 按当前模式填写参考文本、情绪与语气或其他必填项。
+5. 点击“开始生成”，结果可在网页中试听和下载。
 
-克隆模式可以从 `role/` 文件夹读取语音预设。每个预设单独放在一个子文件夹里，配置文件和参考音频放在同一目录内：
+VoxCPM2 模式还可以展开高级参数：
+
+- `CFG`：界面允许 `1.0–3.0`，默认 `2.0`
+- `推理步数`：界面允许 `4–30`，默认 `10`
+- `文本规范化`：将 `normalize=true` 传给 VoxCPM2
+- `参考音频降噪`：将 `denoise=true` 传给 VoxCPM2
+
+## 生成模式
+
+| 页面名称 | API `mode` | 引擎 | 参考音频 | 参考文本 | 情绪/语气 |
+| --- | --- | --- | --- | --- | --- |
+| 可控克隆 | `vox_controllable_clone` | VoxCPM2 | 必需 | 不需要 | 可选，作为 VoxCPM2 控制前缀 |
+| 情景配音 | `scene_dubbing` | Qwen3.5 + VoxCPM2 | 必需 | 不需要 | 由 Qwen3.5 逐条生成 |
+| Hi-Fi 克隆 | `vox_hifi_clone` | VoxCPM2 | 必需 | 必需 | 不支持，界面会禁用 |
+| 参考音频克隆 | `clone` | Qwen3-TTS Base | 必需 | 必需 | 不传给模型，表达主要来自参考音频 |
+| 语音设计 | `vox_design` | VoxCPM2 | 不需要 | 不需要 | 可选 |
+| 语气设计 | `voice_design` | Qwen3-TTS VoiceDesign | 不需要 | 不需要 | 必需 |
+| 设计后复用 | `voice_design_then_clone` | Qwen3-TTS VoiceDesign + Base | 不需要 | 需要设计参考文本 | 必需 |
+
+默认模型：
+
+- VoxCPM2：`openbmb/VoxCPM2`
+- Qwen3-TTS Base：`Qwen/Qwen3-TTS-12Hz-1.7B-Base`
+- Qwen3-TTS VoiceDesign：`Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`
+- 情绪分析：`bartowski/Qwen_Qwen3.5-2B-GGUF` 中的 `Qwen_Qwen3.5-2B-Q4_K_M.gguf`
+
+### 情景配音
+
+情景配音先用本地 Qwen3.5 GGUF 模型生成结构化的表达指令，再释放 llama.cpp 模型，最后加载 VoxCPM2 完成配音，避免两个模型长期同时占用显存。
+
+#### 自动识别
+
+`scene_dubbing_mode=auto`。每个非空行作为一条原句，Qwen3.5 自动分析情绪、强度、语速、音高、音量以及节奏与停顿。
+
+```text
+我们终于赶上了！
+我还是没能等到你。
+```
+
+#### 提示词辅助
+
+`scene_dubbing_mode=assisted`。每个条目必须严格包含三行：
+
+1. 原句
+2. 情感描述
+3. `keyword：` 开头的关键词列表
+
+多个条目之间至少留一个空行：
+
+```text
+Alright, I should probably fix the filter first…
+体现疲惫与无奈，但保持稳定，不破音。
+keyword：疲惫，无奈，认命，倦怠
+
+我们终于赶上了！
+体现松了一口气后的惊喜，语速稍快。
+keyword：惊喜，释然，兴奋
+```
+
+情感描述和关键词只用于生成表达指令，不会改写原句。生成指令会显示在结果旁，并保存到 `metadata.json`。
+
+## 声音预设
+
+克隆类模式可以从 `role/` 读取声音预设。每个预设放在一个独立子目录中：
 
 ```text
 role/
@@ -54,105 +135,199 @@ role/
     alice.mp3
 ```
 
-配置文件格式：
+`preset.json` 格式：
 
 ```json
 {
   "name": "Alice",
   "reference": "alice.mp3",
-  "reference_text": "这段话需要和参考音频中实际说出的内容一致。"
+  "reference_text": "这里填写参考音频中实际说出的完整内容。"
 }
 ```
 
-`reference` 支持 `.wav`、`.mp3`、`.flac`、`.m4a` 和 `.ogg`，路径相对当前预设文件夹解析。启动页面后，“可控克隆”“Hi-Fi 克隆（高级）”和“参考音频克隆”模式会显示“语音预设”下拉框。选择预设后，程序会优先使用预设音频和参考文本；如果不选预设，仍然使用上传参考音频的原流程。
+规则：
 
-## 生成模式
+- 配置文件必须是预设子目录中的 `.json` 文件。
+- `name`、`reference` 和 `reference_text` 都不能为空。
+- `reference` 相对当前预设目录解析，且不能指向 `role/` 之外。
+- 支持 `.wav`、`.mp3`、`.flac`、`.m4a` 和 `.ogg`。
+- 重名、配置无效或参考音频不存在的预设会被跳过，并在终端记录原因。
+- 预设参考文本在可控克隆和情景配音中不会参与模型调用，但仍是当前预设格式的必填字段。
 
-### VoxCPM2
+仓库提供了 `role/示例预设/` 作为模板；补充真实参考音频后才会出现在页面下拉框中。
 
-- `可控克隆`：默认模式。上传参考音频克隆音色，可选填写情绪/语气描述。程序会按 VoxCPM2 要求把描述包装成 `(语气描述)目标文本`，并通过 `reference_wav_path` 保留音色。
-- `情景配音`：选择语音预设或上传参考音频后，可在 `自识别模式` 和 `提示词辅助模式` 之间切换。自识别模式由 Qwen3.5 2B Q4_K_M 逐行分析正文；提示词辅助模式按空行分隔条目，每个条目依次填写原句、情感描述和 `keyword：关键词` 三行。Qwen 会结合这些信息生成情绪、强度、语速、音高、音量和停顿指令，再交给 VoxCPM2。原句不会被描述或关键词改写，分析结果会显示在音频旁并写入 `metadata.json`。首次使用会额外下载约 1.4GB 的 GGUF 模型。
+## HTTP API
 
-提示词辅助模式示例：
+服务提供三个主要入口：
 
-```text
-Alright, I should probably fix the filter first…
-体现疲惫与无奈，但保持稳定，不破音。
-keyword：疲惫，无奈，认命，倦怠，无力，勉强接受
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/` | Web 界面 |
+| `GET` | `/api/voice-presets` | 返回当前可用声音预设 |
+| `POST` | `/api/generate` | 以 `multipart/form-data` 发起生成 |
 
-我们终于赶上了！
-体现松了一口气后的惊喜，语速稍快。
-keyword：惊喜，释然，兴奋
+最小的可控克隆请求：
+
+```powershell
+curl.exe -X POST "http://127.0.0.1:8000/api/generate" `
+  -F "mode=vox_controllable_clone" `
+  -F "ref_audio=@C:\path\to\reference.wav" `
+  -F "texts=第一行要生成的内容。`n第二行要生成的内容。" `
+  -F "emotion_instruction=温柔、克制，语速稍慢"
 ```
 
-调用 `/api/generate` 时传入 `mode=scene_dubbing` 与 `scene_dubbing_mode=assisted` 即可启用辅助模式；省略 `scene_dubbing_mode` 时保持原有自识别行为。
-- `语音设计`：不需要参考音频，可选填写语气描述来生成新声音。
-- `Hi-Fi 克隆（高级）`：上传参考音频并填写逐字参考文本，提高声音相似度。VoxCPM2 文档说明这个路径会忽略语气控制，所以界面会禁用情绪/语气描述。
+`POST /api/generate` 接受以下表单字段：
 
-### Qwen3-TTS
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `mode` | `vox_controllable_clone` | 生成模式，取值见上方模式表 |
+| `scene_dubbing_mode` | `auto` | 情景配音分析方式：`auto` 或 `assisted` |
+| `voice_preset` | 空 | 预设名称；设置后优先于上传文件 |
+| `ref_audio` | 空 | 参考音频文件 |
+| `ref_text` | 空 | 参考音频逐字文本 |
+| `texts` | 空 | 目标文本或辅助配音条目 |
+| `language` | `Auto` | Qwen3-TTS 使用的语言 |
+| `emotion_instruction` | 空 | 情绪与语气描述 |
+| `design_ref_text` | 空 | “设计后复用”的参考文本 |
+| `cfg_value` | `2.0` | VoxCPM2 CFG |
+| `inference_timesteps` | `10` | VoxCPM2 推理步数 |
+| `normalize` | `false` | 是否启用文本规范化 |
+| `denoise` | `false` | 是否对参考音频降噪 |
 
-- `克隆参考音频`：使用 `Qwen/Qwen3-TTS-12Hz-1.7B-Base`。需要上传参考音频和对应文本。这个模式没有独立 `instruct` 参数，语气主要来自参考音频本身。
-- `语气设计`：使用 `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`。不需要参考音频，情绪/语气描述会作为真正的 `instruct` 参数传给模型。
-- `设计后复用`：先用 VoiceDesign 根据语气描述生成一段参考音频，再用 Base 模型把它作为 clone prompt 复用，适合多行文本保持同一种设计声音。
+成功响应包含输出目录、音频列表和可选的情绪分析结果：
 
-注意：不要在克隆模式里把“用伤感的语气说”写到目标文本前面。Base voice clone 会把它当正文朗读；本程序已经避免把语气描述拼进 clone 文本。
+```json
+{
+  "output_dir": "C:\\path\\to\\output\\20260731-120000",
+  "items": [
+    {
+      "index": 1,
+      "text": "要生成的内容",
+      "filename": "line_001.wav",
+      "path": "C:\\path\\to\\output\\20260731-120000\\line_001.wav",
+      "url": "/outputs/20260731-120000/line_001.wav"
+    }
+  ],
+  "emotion_analyses": []
+}
+```
 
 ## 配置
 
-下载相关配置：
+所有配置都通过环境变量设置。
 
-- <code>HF_ENDPOINT</code>：Hugging Face 下载端点，默认 <code>https://hf-mirror.com</code>；如需使用官方源，设置为 <code>https://huggingface.co</code>
-- <code>SIMPLETTS_HF_FALLBACK_ENDPOINT</code>：备用下载端点；默认镜像不可用时自动切换到 <code>https://huggingface.co</code>。显式设置其他 <code>HF_ENDPOINT</code> 时默认不自动切源
-- <code>HF_HUB_ETAG_TIMEOUT</code>：仓库元数据/HEAD 请求超时秒数，默认 <code>60</code>
-- <code>HF_HUB_DOWNLOAD_TIMEOUT</code>：单次文件下载网络超时秒数，默认 <code>300</code>
-- <code>SIMPLETTS_HF_MAX_WORKERS</code>：模型快照并发下载数，默认 <code>2</code>；较低并发可减少镜像/CDN 元数据请求偶发失败
-- <code>SIMPLETTS_HF_RETRIES</code>：完整快照下载失败后的尝试次数，默认 <code>3</code>；重试会继续复用已经下载的缓存
-- <code>HF_HUB_OFFLINE=1</code>：完全离线，只使用已经下载完整的本地缓存
+### Hugging Face 下载
 
-如果当前网络无法访问默认镜像，可以在启动前切换到官方源：
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `HF_ENDPOINT` | `https://hf-mirror.com` | 首选下载端点 |
+| `SIMPLETTS_HF_FALLBACK_ENDPOINT` | `https://huggingface.co` | 默认镜像失败时的备用端点；显式指定其他 `HF_ENDPOINT` 后默认不回退 |
+| `HF_HUB_ETAG_TIMEOUT` | `60` | 元数据请求超时秒数 |
+| `HF_HUB_DOWNLOAD_TIMEOUT` | `300` | 文件下载网络超时秒数 |
+| `SIMPLETTS_HF_MAX_WORKERS` | `2` | 快照并发下载数 |
+| `SIMPLETTS_HF_RETRIES` | `3` | 每个端点的完整下载尝试次数 |
+| `HF_HUB_OFFLINE` | 未启用 | 设为 `1` 时只使用本地缓存 |
 
-    $env:HF_ENDPOINT = "https://huggingface.co"
-    uv run python main.py
+切换到 Hugging Face 官方源：
 
-模型第一次下载成功后，后续运行会直接复用 Hugging Face 缓存。若要强制禁止所有联网检查：
+```powershell
+$env:HF_ENDPOINT = "https://huggingface.co"
+uv run python main.py
+```
 
-    $env:HF_HUB_OFFLINE = "1"
-    uv run python main.py
+模型下载完成后强制离线运行：
 
-- `VOXCPM_MODEL`：VoxCPM2 模型 ID 或本地模型目录，默认 `openbmb/VoxCPM2`
-- `VOXCPM_DEVICE`：VoxCPM2 运行设备，默认 `auto`
-- `VOXCPM_OPTIMIZE`：是否启用 VoxCPM2 `torch.compile` 优化，默认 `true`
-- `VOXCPM_LOAD_DENOISER`：是否加载 VoxCPM2 denoiser，默认 `false`
-- `QWEN_EMOTION_MODEL_PATH`：本地 Qwen3.5 GGUF 文件；设置后不会从 Hub 下载情绪分析模型
-- `QWEN_EMOTION_MODEL_REPO`：情绪分析 GGUF 仓库，默认 `bartowski/Qwen_Qwen3.5-2B-GGUF`
-- `QWEN_EMOTION_MODEL_FILE`：仓库内文件名，默认 `Qwen_Qwen3.5-2B-Q4_K_M.gguf`
-- `QWEN_EMOTION_N_CTX`：情绪分析上下文长度，默认 `4096`
-- `QWEN_EMOTION_N_GPU_LAYERS`：卸载到 GPU 的层数，默认 `-1`（全部层）
-- `QWEN_EMOTION_MAIN_GPU`：llama.cpp Vulkan 设备编号；本机默认 `1` 对应 RTX 4080，如显卡枚举顺序不同可覆盖。情绪分析完成后会释放模型，再启动 VoxCPM2 生成
-- `SIMPLETTS_LOG_LEVEL`：终端日志级别，默认 `INFO`；设为 `DEBUG` 会额外显示静态资源请求等细节
-- `QWEN_TTS_MODEL`：模型 ID 或本地模型目录，默认 `Qwen/Qwen3-TTS-12Hz-1.7B-Base`
-- `QWEN_TTS_VOICE_DESIGN_MODEL`：VoiceDesign 模型 ID 或本地模型目录，默认 `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`
-- `QWEN_TTS_DEVICE`：设置为 `cuda` 强制使用 GPU；未设置时自动检测 CUDA
-- `QWEN_TTS_FLASH_ATTENTION=0`：禁用 FlashAttention 参数
+```powershell
+$env:HF_HUB_OFFLINE = "1"
+uv run python main.py
+```
 
-终端日志会显示 HTTP 请求、模型下载与加载耗时、逐行情绪分析结果、失败重试、VoxCPM2 每行生成进度、音频写入路径和总耗时。如需最详细日志：
+### 模型与运行参数
 
-    $env:SIMPLETTS_LOG_LEVEL = "DEBUG"
-    uv run python main.py
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `VOXCPM_MODEL` | `openbmb/VoxCPM2` | VoxCPM2 模型 ID 或本地目录 |
+| `VOXCPM_OPTIMIZE` | `true` | 是否启用 VoxCPM2 `torch.compile` 优化 |
+| `VOXCPM_LOAD_DENOISER` | `false` | 是否加载 VoxCPM2 denoiser |
+| `QWEN_TTS_MODEL` | Qwen3-TTS Base 1.7B | Base 模型 ID 或本地目录 |
+| `QWEN_TTS_VOICE_DESIGN_MODEL` | Qwen3-TTS VoiceDesign 1.7B | VoiceDesign 模型 ID 或本地目录 |
+| `QWEN_TTS_DEVICE` | 自动检测 | 设为 `cuda` 可强制 Qwen3-TTS 使用 GPU |
+| `QWEN_TTS_FLASH_ATTENTION` | `1` | 设为 `0` 禁用 FlashAttention；仅在已安装 `flash_attn` 时启用 |
 
-## 输出
+当前锁定的 `voxcpm 2.0.2` 不接受 `device` 参数。即使设置 `VOXCPM_DEVICE`，程序也只会记录警告并忽略它。
 
-每次生成会创建一个新目录：
+### 情绪分析
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `QWEN_EMOTION_MODEL_PATH` | 空 | 本地 GGUF 文件；设置后不从 Hub 下载 |
+| `QWEN_EMOTION_MODEL_REPO` | `bartowski/Qwen_Qwen3.5-2B-GGUF` | GGUF 仓库 |
+| `QWEN_EMOTION_MODEL_FILE` | `Qwen_Qwen3.5-2B-Q4_K_M.gguf` | 仓库内文件名 |
+| `QWEN_EMOTION_N_CTX` | `4096` | llama.cpp 上下文长度 |
+| `QWEN_EMOTION_N_GPU_LAYERS` | `-1` | 卸载到 GPU 的层数，`-1` 表示全部 |
+| `QWEN_EMOTION_MAIN_GPU` | `1` | llama.cpp Vulkan 设备编号；请按本机枚举顺序调整 |
+
+### 日志
+
+`SIMPLETTS_LOG_LEVEL` 默认为 `INFO`。终端会记录请求、模型下载与加载、情绪分析、逐行生成、文件写入和耗时。查看静态资源请求等更详细信息：
+
+```powershell
+$env:SIMPLETTS_LOG_LEVEL = "DEBUG"
+uv run python main.py
+```
+
+## 输出文件
+
+每次生成都会创建新的时间戳目录；同一秒内的任务会自动追加序号：
 
 ```text
 output/
-  20260504-153000/
+  20260731-120000/
     line_001.wav
     line_002.wav
     metadata.json
+  20260731-120000-01/
+    line_001.wav
+    metadata.json
 ```
 
-`metadata.json` 会记录生成引擎、模式、参考素材、语气描述、Vox 参数和输出文件信息。
+临时上传的参考音频保存在 `.tmp_uploads/`。当前程序不会自动清理历史输出或上传文件，需要时请自行归档或删除。
+
+## 项目结构
+
+```text
+.
+├── main.py                         # 本地启动入口
+├── pyproject.toml                  # 项目与依赖配置
+├── simplettsworkflow/
+│   ├── app.py                      # FastAPI 路由与请求处理
+│   ├── tts.py                      # VoxCPM2 / Qwen3-TTS 工作流
+│   ├── emotion.py                  # Qwen3.5 GGUF 情绪分析
+│   ├── model_download.py           # Hugging Face 下载与缓存
+│   ├── voice_presets.py            # 声音预设加载
+│   ├── logging_config.py           # 日志配置
+│   └── settings.py                 # 路径和默认模型
+├── templates/index.html            # Web 页面
+├── static/                         # 前端脚本与样式
+├── role/                           # 本地声音预设
+├── output/                         # 生成结果
+└── tests/                          # Pytest 测试
+```
+
+## 测试
+
+测试使用假模型验证 API、模式分派、预设解析、情绪分析、下载重试和元数据写入，不会实际执行大模型推理：
+
+```powershell
+uv run pytest
+```
+
+## 注意事项
+
+- Qwen3-TTS Base 的克隆接口没有独立的 `instruct` 参数。不要把“用伤感的语气说”等提示拼到目标文本前，否则它会被当作正文朗读。
+- VoxCPM2 Hi-Fi 克隆路径会忽略语气控制，因此该模式在界面中禁用情绪与语气字段。
+- 模型会在首次使用对应模式时下载；Qwen3-TTS 会先下载完整仓库快照，再从本地路径加载。
+- 本服务默认只监听 `127.0.0.1`，没有用户认证。若修改为公网监听，请自行增加访问控制、上传限制和反向代理。
 
 ## 参考
 
