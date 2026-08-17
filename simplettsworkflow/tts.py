@@ -130,12 +130,19 @@ class QwenTTSService:
 
         from voxcpm import VoxCPM
 
+        # Resolve the repository through the shared downloader first. VoxCPM's
+        # own ``from_pretrained`` calls ``snapshot_download`` directly, which
+        # would bypass our mirror retries/fallback and can fail on a partial
+        # cache. Passing the resolved snapshot also prevents any extra Hub
+        # request while the library initializes the model.
+        model_path = resolve_huggingface_model(self.voxcpm_model_id)
         load_denoiser = _env_bool("VOXCPM_LOAD_DENOISER", False)
         optimize = _env_bool("VOXCPM_OPTIMIZE", True)
         load_started_at = time.perf_counter()
         logger.info(
-            "Loading VoxCPM2 model: model=%s load_denoiser=%s optimize=%s",
+            "Loading VoxCPM2 model: model=%s local_path=%s load_denoiser=%s optimize=%s",
             self.voxcpm_model_id,
+            model_path,
             load_denoiser,
             optimize,
         )
@@ -143,7 +150,7 @@ class QwenTTSService:
             logger.warning("VOXCPM_DEVICE is set but voxcpm 2.0.2 does not accept a device argument; ignoring it.")
         # VoxCPM2 is loaded only for Vox modes so Qwen workflows stay lightweight.
         self._voxcpm_model = VoxCPM.from_pretrained(
-            self.voxcpm_model_id,
+            model_path,
             load_denoiser=load_denoiser,
             optimize=optimize,
         )

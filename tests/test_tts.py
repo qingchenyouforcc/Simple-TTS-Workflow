@@ -199,6 +199,7 @@ def test_vox_hifi_clone_uses_prompt_text_without_style_prefix(monkeypatch, tmp_p
 
 def test_load_voxcpm_model_does_not_pass_device(monkeypatch, tmp_path: Path) -> None:
     calls = []
+    resolve_calls = []
 
     class FakeVoxCPM:
         @classmethod
@@ -207,13 +208,18 @@ def test_load_voxcpm_model_does_not_pass_device(monkeypatch, tmp_path: Path) -> 
             return FakeVoxModel()
 
     monkeypatch.setenv("VOXCPM_DEVICE", "cuda:0")
+    monkeypatch.setattr(
+        "simplettsworkflow.tts.resolve_huggingface_model",
+        lambda model_id: resolve_calls.append(model_id) or str(tmp_path / "cached-vox"),
+    )
     monkeypatch.setattr("voxcpm.VoxCPM", FakeVoxCPM)
     service = QwenTTSService(output_dir=tmp_path, voxcpm_model_id="local-vox")
 
     model = service._load_voxcpm_model()
 
     assert isinstance(model, FakeVoxModel)
-    assert calls[0][0] == ("local-vox",)
+    assert resolve_calls == ["local-vox"]
+    assert calls[0][0] == (str(tmp_path / "cached-vox"),)
     assert "device" not in calls[0][1]
 
 
