@@ -51,6 +51,7 @@ let currentView = "studio";
 let lastGenerationData = null;
 let generationInProgress = false;
 let resultGroups = [];
+let restoringResults = true;
 let regenerationCount = loadRegenerationCount();
 
 function loadRegenerationCount() {
@@ -95,6 +96,44 @@ syncSidebarState();
 loadVoicePresets();
 updateModeUI();
 updateTextStats();
+restoreSavedResults();
+
+function persistResults() {
+  if (restoringResults) return;
+  const snapshot = {
+    version: 1,
+    groups: structuredClone(resultGroups),
+    generationEntries: lastGenerationData ? Array.from(lastGenerationData.entries()) : null,
+  };
+  resultStorage.save(snapshot).catch(() => showToast("本地保存失败，请勿刷新，先下载需要的音频。"));
+}
+
+async function restoreSavedResults() {
+  submitButton.disabled = true;
+  clearResults.disabled = true;
+  try {
+    const snapshot = await resultStorage.load();
+    if (snapshot?.version === 1 && snapshot.groups?.length && snapshot.generationEntries) {
+      const data = new FormData();
+      for (const [key, value] of snapshot.generationEntries) data.append(key, value);
+      lastGenerationData = data;
+      resultGroups = snapshot.groups;
+      renderResultGroups();
+      renderCandidateSummary();
+      emptyResults.hidden = true;
+      regenerateButton.hidden = false;
+      clearResults.hidden = false;
+      setResultState("success", "已恢复上次结果");
+      if (currentView === "studio") showView("results");
+    }
+  } catch {
+    showToast("无法读取本地结果记录，磁盘上的音频文件不受影响。");
+  } finally {
+    restoringResults = false;
+    submitButton.disabled = false;
+    clearResults.disabled = false;
+  }
+}
 
 function bindEvents() {
   let settingsReturnView = "studio";
@@ -194,7 +233,7 @@ function bindEvents() {
 
 async function handleSubmit(event) {
   event.preventDefault();
-  if (generationInProgress) {
+  if (generationInProgress || restoringResults) {
     return;
   }
   if (!validateForm()) {
@@ -320,6 +359,7 @@ function renderResultGroups() {
   updateResultsCount(resultGroups.length);
   candidateHelp.hidden = resultGroups.length === 0;
   retainCandidates.hidden = !resultGroups.some((group) => group.versions.length > 1);
+  persistResults();
 }
 
 function renderCandidateSummary() {
@@ -810,11 +850,12 @@ function setResultState(state, label) {
 }
 
 function resetResults() {
-  if (generationInProgress) {
+  if (generationInProgress || restoringResults) {
     return;
   }
   lastGenerationData = null;
   resultGroups = [];
+  persistResults();
   retainCandidates.hidden = true;
   candidateHelp.hidden = true;
   regenerateButton.hidden = true;
