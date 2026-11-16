@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#173b35" />
     <title>Simple TTS Workflow · Voice Studio</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23173b35'/%3E%3Cpath d='M18 26v12M25 18v28M32 23v18M39 14v36M46 26v12' stroke='%23fff7eb' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261116-settings-page-1" />
   </head>
   <body>
     <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -61,6 +61,7 @@
         </nav>
 
         <div class="sidebar-footer">
+          <button id="open-settings" class="nav-item" type="button" data-view="settings"><span class="nav-icon" aria-hidden="true">⚙</span><span class="nav-copy"><strong>设置</strong><small>生成偏好</small></span></button>
           <div class="service-status"><i></i><span><strong>服务已就绪</strong><small>本地工作流</small></span></div>
           <button id="theme-toggle" class="theme-button" type="button" aria-label="切换明暗主题">
             <span class="theme-icon" aria-hidden="true">◐</span><span class="theme-label">切换主题</span>
@@ -337,11 +338,14 @@
           </div>
           <div class="result-actions">
             <span id="result-status" class="result-status is-idle"><i></i>等待生成</span>
+            <button id="regenerate-button" class="secondary-button regenerate-button" type="button" title="使用本次提交的文本、音色和参数重新生成全部音频" hidden><span aria-hidden="true">↻</span><span class="regenerate-label">重新生成</span></button>
+            <button id="retain-candidates" class="secondary-button" type="button" hidden>只保留选中版本</button>
             <button id="clear-results" class="text-button" type="button" hidden>清空结果</button>
           </div>
         </div>
 
         <div id="message" class="message">完成设置并开始生成，你的音频会出现在这里。</div>
+        <p id="candidate-help" class="candidate-help" hidden>切换版本后可试听、下载；选好后点击“只保留选中版本”，将删除本次结果中未选中的候选音频文件。重新生成不会删除已有版本。</p>
         <div id="empty-results" class="empty-results">
           <div class="empty-visual" aria-hidden="true">
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
@@ -353,6 +357,32 @@
         </div>
       </section>
 
+      <section id="settings-view" class="app-view settings-view" data-view-panel="settings" aria-labelledby="settings-title" hidden>
+        <header class="workspace-header">
+          <div>
+            <p class="eyebrow"><span>PREFERENCES</span></p>
+            <h1 id="settings-title">设置</h1>
+            <p class="workspace-description">调整生成偏好，让每次创作更顺手。</p>
+          </div>
+          <button id="close-settings" class="secondary-button" type="button">← 返回</button>
+        </header>
+        <form id="settings-form" class="panel settings-panel">
+          <div class="section-heading compact">
+            <div class="step-number" aria-hidden="true">⚙</div>
+            <div><p class="section-kicker">Generation preferences</p><h2>生成偏好</h2></div>
+          </div>
+          <div class="settings-row">
+            <div>
+              <label for="regeneration-count">每条音频重新生成次数</label>
+              <p id="regeneration-count-help">一次生成多个候选版本，试听后选出最满意的声音。</p>
+              <small>默认 3 次，可设置 1–20 次。次数越多，等待时间越长。</small>
+            </div>
+            <div class="settings-count"><input id="regeneration-count" type="number" min="1" max="20" step="1" value="3" required aria-describedby="regeneration-count-help" /><span>次</span></div>
+          </div>
+          <div class="settings-actions"><span>设置保存在当前浏览器</span><button class="secondary-button" type="submit">保存设置</button></div>
+        </form>
+      </section>
+
       <footer>
         <span>Simple TTS Studio</span>
         <span>VoxCPM2 · Qwen3.5 · Qwen3-TTS · Local-first</span>
@@ -362,6 +392,7 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/static/app.js"></script>
+
+    <script src="/static/app.js?v=20261116-settings-page-1"></script>
   </body>
 </html>

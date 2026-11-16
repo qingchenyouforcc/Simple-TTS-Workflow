@@ -573,7 +573,7 @@ a {
   font-size: 0.6rem;
 }
 
-input:not([type="checkbox"]):not([type="file"]),
+input:not([type="checkbox"]):not([type="file"]):not([type="radio"]),
 select,
 textarea {
   width: 100%;
@@ -585,7 +585,7 @@ textarea {
   transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 
-input:not([type="checkbox"]):not([type="file"]),
+input:not([type="checkbox"]):not([type="file"]):not([type="radio"]),
 select {
   min-height: 46px;
   padding: 0 13px;
@@ -1148,8 +1148,22 @@ textarea::placeholder {
 
 .result-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+.result-actions .regenerate-button {
+  min-height: 44px;
+  padding: 0 14px;
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.result-actions .regenerate-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .result-status {
@@ -1330,6 +1344,126 @@ textarea::placeholder {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 12px;
   align-items: start;
+}
+
+.candidate-controls {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.candidate-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  flex: 1 1 240px;
+}
+
+.candidate-choices legend,
+.candidate-help {
+  margin: 0 0 8px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  line-height: 1.6;
+}
+
+.candidate-help { margin-top: 12px; }
+
+/* Settings shares the workspace header and panel layout with other views. */
+.settings-panel { margin-top: 24px; }
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  padding: 30px 0;
+  margin-top: 22px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.settings-row label { font-size: 0.9rem; font-weight: 750; }
+.settings-row p { margin: 10px 0 4px; color: var(--text-soft); font-size: 0.8rem; line-height: 1.7; }
+.settings-row small, .settings-actions > span { color: var(--text-faint); font-size: 0.72rem; line-height: 1.7; }
+.settings-count { display: flex; align-items: center; gap: 12px; color: var(--text-soft); font-size: 0.8rem; }
+.settings-count input { max-width: 110px; }
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-top: 24px; }
+.settings-actions button[type="submit"] { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+
+.candidate-choice {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.candidate-choice::before {
+  content: "✓";
+  font-size: 0.75rem;
+  opacity: 0;
+}
+
+.candidate-choice:hover {
+  border-color: var(--primary);
+  background: var(--surface-soft);
+}
+
+.candidate-choice:has(input:checked) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.candidate-choice:has(input:checked)::before { opacity: 1; }
+
+.candidate-choice:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.candidate-choice input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.candidate-choice:has(input:disabled),
+.candidate-controls button:disabled { opacity: 0.6; cursor: wait; }
+
+.candidate-directory {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .result-index {

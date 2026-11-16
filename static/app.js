@@ -35,6 +35,10 @@ const emptyResults = document.querySelector("#empty-results");
 const resultList = document.querySelector("#result-list");
 const resultStatus = document.querySelector("#result-status");
 const clearResults = document.querySelector("#clear-results");
+const regenerateButton = document.querySelector("#regenerate-button");
+const regenerateLabel = regenerateButton.querySelector(".regenerate-label");
+const retainCandidates = document.querySelector("#retain-candidates");
+const candidateHelp = document.querySelector("#candidate-help");
 const themeToggle = document.querySelector("#theme-toggle");
 const toast = document.querySelector("#toast");
 const cloneModes = ["vox_controllable_clone", "scene_dubbing", "vox_hifi_clone", "clone"];
@@ -44,6 +48,17 @@ let activePresetName = "";
 let manualRefText = "";
 let toastTimer;
 let currentView = "studio";
+let lastGenerationData = null;
+let generationInProgress = false;
+let resultGroups = [];
+let regenerationCount = loadRegenerationCount();
+
+function loadRegenerationCount() {
+  try {
+    const value = Number(localStorage.getItem("tts-regeneration-count"));
+    return Number.isInteger(value) && value >= 1 && value <= 20 ? value : 3;
+  } catch { return 3; }
+}
 
 const modeNotes = {
   vox_controllable_clone: "推荐入门使用。上传一段参考音频保留音色，再用自然语言控制情绪、节奏与表达方式。",
@@ -82,6 +97,27 @@ updateModeUI();
 updateTextStats();
 
 function bindEvents() {
+  let settingsReturnView = "studio";
+  const countInput = document.querySelector("#regeneration-count");
+  document.querySelector("#open-settings").addEventListener("click", () => {
+    countInput.value = String(regenerationCount);
+    if (currentView !== "settings") settingsReturnView = currentView;
+    showView("settings");
+    closeSidebar(true);
+  });
+  document.querySelector("#close-settings").addEventListener("click", () => showView(settingsReturnView));
+  document.querySelector("#settings-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!countInput.reportValidity()) return;
+    regenerationCount = Number(countInput.value);
+    let persisted = true;
+    try { localStorage.setItem("tts-regeneration-count", String(regenerationCount)); }
+    catch { persisted = false; }
+    for (const button of resultList.querySelectorAll(".regenerate-one")) {
+      button.textContent = "↻ 重新生成 " + regenerationCount + " 次";
+    }
+    showToast(persisted ? "设置已保存" : "设置已应用，浏览器未允许永久保存");
+  });
   for (const card of modeCards) {
     card.addEventListener("click", () => {
       modeInput.value = card.dataset.modeValue;
@@ -146,49 +182,75 @@ function bindEvents() {
   }
 
   form.addEventListener("submit", handleSubmit);
+  regenerateButton.addEventListener("click", () => {
+    if (lastGenerationData && !generationInProgress) {
+      generateAudio(lastGenerationData);
+    }
+  });
   clearResults.addEventListener("click", resetResults);
+  retainCandidates.addEventListener("click", retainSelectedCandidates);
   themeToggle.addEventListener("click", toggleTheme);
 }
 
 async function handleSubmit(event) {
   event.preventDefault();
+  if (generationInProgress) {
+    return;
+  }
   if (!validateForm()) {
     return;
   }
 
+  await generateAudio(new FormData(form));
+}
+
+async function generateAudio(data) {
+  if (generationInProgress) {
+    return;
+  }
+  const appending = data === lastGenerationData && resultGroups.length > 0;
+  regenerateButton.hidden = false;
   setLoading(true);
   setResultState("loading", "正在生成");
   message.className = "message";
-  if (modeInput.value === "scene_dubbing") {
-    message.textContent = isAssistedSceneMode()
+  if (data.get("mode") === "scene_dubbing") {
+    message.textContent = data.get("scene_dubbing_mode") === "assisted"
       ? "Qwen3.5 正在根据描述与关键词生成情绪指令，随后将由 VoxCPM2 完成配音。首次使用需要下载模型，请保持页面开启。"
       : "Qwen3.5 正在自识别每行文本的情绪，随后将由 VoxCPM2 生成音频。首次使用需要下载模型，请保持页面开启。";
   } else {
     message.textContent = "模型正在准备并生成音频。首次使用可能还需要下载权重，请保持页面开启。";
   }
   emptyResults.hidden = true;
-  resultList.replaceChildren();
-  updateResultsCount(0);
   clearResults.hidden = true;
 
   try {
     const response = await fetch("/api/generate", {
       method: "POST",
-      body: new FormData(form),
+      body: data,
     });
     const payload = await parseResponse(response);
     if (!response.ok) {
       throw new Error(payload.detail || "生成失败，请检查输入后重试。");
     }
 
-    renderSuccessMessage(payload);
     const analysesByIndex = new Map(
       (payload.emotion_analyses || []).map((analysis) => [analysis.index, analysis]),
     );
+    if (appending && payload.items.length !== resultGroups.length) {
+      throw new Error("返回的音频条数与本次结果不一致，请重试。");
+    }
+    if (!appending) {
+      resultGroups = payload.items.map((item, index) => ({
+        index: item.index, input: getSingleInput(data, index), versions: [], selected: 0,
+      }));
+    }
     payload.items.forEach((item, index) => {
-      resultList.appendChild(renderResult(item, index, analysesByIndex.get(item.index)));
+      const group = resultGroups[index];
+      group.versions.push({ item, analysis: analysesByIndex.get(item.index), outputDir: payload.output_dir, number: (group.versions.at(-1)?.number || 0) + 1 });
     });
-    updateResultsCount(payload.items.length);
+    lastGenerationData = data;
+    renderResultGroups();
+    renderCandidateSummary();
     setResultState("success", "生成完成");
     clearResults.hidden = false;
     showToast("已生成 " + payload.items.length + " 个音频");
@@ -196,8 +258,153 @@ async function handleSubmit(event) {
   } catch (error) {
     message.className = "message is-error";
     message.textContent = error instanceof Error ? error.message : "生成失败，请稍后重试。";
-    emptyResults.hidden = false;
+    emptyResults.hidden = resultGroups.length > 0;
     setResultState("error", "生成失败");
+  } finally {
+    regenerateButton.hidden = !lastGenerationData;
+    clearResults.hidden = resultGroups.length === 0;
+    setLoading(false);
+  }
+}
+
+function getSingleInput(data, index) {
+  const texts = String(data.get("texts") || "").replace(/\r\n?/g, "\n").trim();
+  if (data.get("mode") === "scene_dubbing" && data.get("scene_dubbing_mode") === "assisted") {
+    return texts.split(/\n(?:[ \t]*\n)+/)[index];
+  }
+  return texts.split("\n").map((line) => line.trim()).filter(Boolean)[index];
+}
+
+function renderResultGroups() {
+  for (const audio of resultList.querySelectorAll("audio")) audio.pause();
+  resultList.replaceChildren();
+  for (const group of resultGroups) {
+    const version = group.versions[group.selected];
+    const card = renderResult({ ...version.item, index: group.index }, 0, version.analysis);
+    const controls = document.createElement("div");
+    controls.className = "candidate-controls";
+    const choices = document.createElement("fieldset");
+    choices.className = "candidate-choices";
+    const legend = document.createElement("legend");
+    legend.textContent = "第 " + group.index + " 条 · 选择保留的版本（切换后试听）";
+    choices.append(legend);
+    group.versions.forEach((candidate, index) => {
+      const label = document.createElement("label");
+      label.className = "candidate-choice";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "candidate-" + group.index;
+      radio.value = String(index);
+      radio.checked = group.selected === index;
+      radio.disabled = generationInProgress;
+      radio.addEventListener("change", () => {
+        group.selected = index;
+        renderResultGroups();
+        renderCandidateSummary();
+        resultList.querySelector(`input[name="candidate-${group.index}"]:checked`)?.focus();
+      });
+      label.append(radio, document.createTextNode("版本 " + candidate.number));
+      choices.append(label);
+    });
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "secondary-button regenerate-one";
+    retry.textContent = "↻ 重新生成 " + regenerationCount + " 次";
+    retry.setAttribute("aria-label", "重新生成第 " + group.index + " 条音频");
+    retry.disabled = generationInProgress;
+    retry.addEventListener("click", () => regenerateOne(group));
+    controls.append(choices, retry);
+    card.append(controls);
+    resultList.append(card);
+  }
+  updateResultsCount(resultGroups.length);
+  candidateHelp.hidden = resultGroups.length === 0;
+  retainCandidates.hidden = !resultGroups.some((group) => group.versions.length > 1);
+}
+
+function renderCandidateSummary() {
+  const total = resultGroups.reduce((count, group) => count + group.versions.length, 0);
+  message.className = "message";
+  message.textContent = resultGroups.length + " 条音频 · " + total + " 个候选版本 · 每条保留一个选中版本";
+  const directories = [...new Set(resultGroups.map((group) => group.versions[group.selected].outputDir))];
+  for (const directory of directories) {
+    const row = document.createElement("div");
+    row.className = "candidate-directory";
+    const path = document.createElement("span");
+    path.textContent = directory;
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "inline-copy";
+    copy.textContent = "复制目录";
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(directory); showToast("输出目录已复制"); }
+      catch { showToast("无法访问剪贴板，请手动复制目录"); }
+    });
+    row.append(path, copy);
+    message.append(row);
+  }
+}
+
+async function regenerateOne(group) {
+  if (generationInProgress || !lastGenerationData) return;
+  const data = new FormData();
+  for (const [key, value] of lastGenerationData.entries()) data.append(key, value);
+  data.set("texts", group.input);
+  const count = regenerationCount;
+  let completed = 0;
+  setLoading(true);
+  try {
+    for (let attempt = 1; attempt <= count; attempt += 1) {
+    setResultState("loading", "第 " + group.index + " 条 · 正在生成 " + attempt + "/" + count);
+    const response = await fetch("/api/generate", { method: "POST", body: data });
+    const payload = await parseResponse(response);
+    if (!response.ok) throw new Error(payload.detail || "重新生成失败，请重试。");
+    if (payload.items?.length !== 1) throw new Error("服务器未返回单条音频，请重试。");
+    group.versions.push({ item: payload.items[0], analysis: payload.emotion_analyses?.[0], outputDir: payload.output_dir, number: group.versions.at(-1).number + 1 });
+    completed += 1;
+    renderResultGroups();
+    renderCandidateSummary();
+    }
+    setResultState("success", "新版本已生成");
+    showToast("第 " + group.index + " 条已新增 " + completed + " 个版本，可切换试听后选择");
+  } catch (error) {
+    setResultState("error", "重新生成失败");
+    showToast("已生成 " + completed + "/" + count + " 个版本，已有版本已保留。" + (error.message || "请稍后重试"));
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function retainSelectedCandidates() {
+  if (generationInProgress) return;
+  const groups = resultGroups.filter((group) => group.versions.length > 1).map((group) => ({
+    selected: group.versions[group.selected].item.candidate_id,
+    discard: group.versions.filter((_, index) => index !== group.selected).map((version) => version.item.candidate_id),
+  }));
+  if (!groups.length) return;
+  if (groups.some((group) => !group.selected || group.discard.some((id) => !id))) {
+    showToast("部分版本不支持文件清理，请重新生成后重试");
+    return;
+  }
+  setLoading(true);
+  setResultState("loading", "正在保留选中版本");
+  try {
+    const response = await fetch("/api/results/retain", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ groups }),
+    });
+    const payload = await parseResponse(response);
+    if (!response.ok) throw new Error(payload.detail || "清理失败，请重试。");
+    for (const group of resultGroups) {
+      group.versions = [group.versions[group.selected]];
+      group.selected = 0;
+    }
+    renderResultGroups();
+    renderCandidateSummary();
+    setResultState("success", "已保留选中版本");
+    showToast("已删除 " + payload.removed + " 个未选中的候选音频");
+  } catch (error) {
+    setResultState("error", "清理失败");
+    showToast(error.message || "清理失败，请重试");
   } finally {
     setLoading(false);
   }
@@ -579,6 +786,13 @@ function clearAllInvalidStates() {
 }
 
 function setLoading(isLoading) {
+  generationInProgress = isLoading;
+  clearResults.disabled = isLoading;
+  retainCandidates.disabled = isLoading;
+  for (const control of resultList.querySelectorAll("button, input")) control.disabled = isLoading;
+  regenerateButton.disabled = isLoading;
+  regenerateButton.setAttribute("aria-busy", String(isLoading));
+  regenerateLabel.textContent = isLoading ? "正在生成…" : "重新生成";
   submitButton.disabled = isLoading;
   submitButton.classList.toggle("is-loading", isLoading);
   if (!isLoading) {
@@ -596,6 +810,14 @@ function setResultState(state, label) {
 }
 
 function resetResults() {
+  if (generationInProgress) {
+    return;
+  }
+  lastGenerationData = null;
+  resultGroups = [];
+  retainCandidates.hidden = true;
+  candidateHelp.hidden = true;
+  regenerateButton.hidden = true;
   resultList.replaceChildren();
   emptyResults.hidden = false;
   clearResults.hidden = true;
@@ -685,6 +907,10 @@ function showView(view) {
   }
 
   const showingResults = view === "results";
+  const settingsNav = document.querySelector("#open-settings");
+  settingsNav.classList.toggle("is-active", view === "settings");
+  if (view === "settings") settingsNav.setAttribute("aria-current", "page");
+  else settingsNav.removeAttribute("aria-current");
   resultsNav.classList.toggle("is-active", showingResults);
   if (showingResults) {
     resultsNav.setAttribute("aria-current", "page");
@@ -693,7 +919,7 @@ function showView(view) {
   }
 
   for (const card of modeCards) {
-    const isCurrentMode = card.dataset.modeValue === modeInput.value && !showingResults;
+    const isCurrentMode = card.dataset.modeValue === modeInput.value && view === "studio";
     card.classList.toggle("is-active", isCurrentMode);
     if (isCurrentMode) {
       card.setAttribute("aria-current", "page");
