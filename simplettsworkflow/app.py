@@ -11,6 +11,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
+from pydantic import BaseModel, Field
+
+from .candidates import CandidateStore
 
 from .emotion import AssistedSceneInput, parse_assisted_scene_blocks
 from .logging_config import configure_application_logging
@@ -36,6 +39,16 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Simple Qwen3-TTS Workflow")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 service = QwenTTSService()
+candidate_store = CandidateStore(OUTPUT_DIR, BASE_DIR / ".local-state" / "candidate-key")
+
+
+class CandidateSelection(BaseModel):
+    selected: str
+    discard: list[str] = Field(default_factory=list, max_length=1000)
+
+
+class RetainCandidatesRequest(BaseModel):
+    groups: list[CandidateSelection] = Field(min_length=1, max_length=1000)
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -251,13 +264,32 @@ async def generate(
     return JSONResponse(
         {
             "output_dir": result.output_dir,
-            "items": [item.__dict__ for item in result.items],
+            "items": [_serialize_audio(item) for item in result.items],
             "emotion_analyses": [
                 _serialize_emotion_analysis(analysis)
                 for analysis in getattr(result, "emotion_analyses", [])
             ],
         }
     )
+
+
+@app.post("/api/results/retain")
+def retain_candidates(request: RetainCandidatesRequest):
+    try:
+        removed = candidate_store.retain([group.model_dump() for group in request.groups])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="清理文件失败，请检查文件权限后重试。") from exc
+    return {"removed": removed}
+
+
+def _serialize_audio(item) -> dict:
+    data = dict(item.__dict__)
+    # Services used by integrations may return paths outside the output root.
+    if Path(item.path).resolve().is_relative_to(candidate_store.root):
+        data["candidate_id"] = candidate_store.token(item.path)
+    return data
 
 
 def _get_requested_preset(voice_preset: str) -> VoicePreset | None:

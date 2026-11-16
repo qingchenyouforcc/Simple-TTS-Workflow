@@ -29,6 +29,39 @@ def test_index_renders_form() -> None:
     assert 'data-scene-dubbing-mode="assisted"' in response.text
 
 
+def test_retain_candidates_removes_only_discarded_audio(monkeypatch, tmp_path: Path) -> None:
+    from simplettsworkflow.candidates import CandidateStore
+
+    store = CandidateStore(tmp_path)
+    monkeypatch.setattr("simplettsworkflow.app.candidate_store", store)
+    chosen = tmp_path / "chosen.wav"
+    rejected = tmp_path / "rejected.wav"
+    chosen.write_bytes(b"selected")
+    rejected.write_bytes(b"discard")
+    response = client.post("/api/results/retain", json={"groups": [{
+        "selected": store.token(str(chosen)),
+        "discard": [store.token(str(rejected))],
+    }]})
+    assert response.status_code == 200
+    assert response.json() == {"removed": 1}
+    assert chosen.read_bytes() == b"selected"
+    assert not rejected.exists()
+
+
+def test_retain_candidates_rejects_forged_token(monkeypatch, tmp_path: Path) -> None:
+    from simplettsworkflow.candidates import CandidateStore
+
+    store = CandidateStore(tmp_path)
+    monkeypatch.setattr("simplettsworkflow.app.candidate_store", store)
+    chosen = tmp_path / "chosen.wav"
+    chosen.write_bytes(b"selected")
+    response = client.post("/api/results/retain", json={"groups": [{
+        "selected": store.token(str(chosen)), "discard": ["forged:../outside.wav"],
+    }]})
+    assert response.status_code == 400
+    assert chosen.exists()
+
+
 def test_vox_controllable_clone_requires_reference_audio() -> None:
     response = client.post(
         "/api/generate",
