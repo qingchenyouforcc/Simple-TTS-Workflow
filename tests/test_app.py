@@ -62,6 +62,42 @@ def test_retain_candidates_rejects_forged_token(monkeypatch, tmp_path: Path) -> 
     assert chosen.exists()
 
 
+def test_scene_regeneration_passes_selected_analysis_to_service(monkeypatch, tmp_path: Path) -> None:
+    import json
+
+    monkeypatch.setattr("simplettsworkflow.app._resolve_reference_material", lambda *args, **kwargs: (tmp_path / "voice.wav", ""))
+    def generate(**kwargs):
+        analysis = kwargs["reused_analyses"][0]
+        assert analysis.index == 1
+        assert analysis.text == "Ow!"
+        assert analysis.instruction == "极快，爆发，惊恐"
+        assert analysis.description == "突然受惊"
+        assert analysis.keywords == ("惊恐",)
+        return SimpleNamespace(output_dir=str(tmp_path), items=[], emotion_analyses=[analysis])
+    monkeypatch.setattr("simplettsworkflow.app.service.generate_scene_dubbing", generate)
+    response = client.post("/api/generate", data={
+        "mode": "scene_dubbing", "scene_dubbing_mode": "assisted",
+        "texts": "Ow!\n突然受惊\nkeyword: 惊恐",
+        "scene_analyses": json.dumps([{"text": "Ow!", "instruction": "极快，爆发，惊恐"}]),
+    })
+    assert response.status_code == 200
+    assert response.json()["emotion_analyses"][0]["instruction"] == "极快，爆发，惊恐"
+
+
+def test_scene_regeneration_rejects_mismatched_analysis_before_model_call(monkeypatch) -> None:
+    import json
+
+    def unexpected(**kwargs):
+        raise AssertionError("Model must not run for invalid reused instructions")
+    monkeypatch.setattr("simplettsworkflow.app.service.generate_scene_dubbing", unexpected)
+    for value in ("invalid JSON", "[]", json.dumps([{"text": "other", "instruction": "平静"}]),
+                  json.dumps([{"text": "Ow!", "instruction": ""}])):
+        response = client.post("/api/generate", data={
+            "mode": "scene_dubbing", "texts": "Ow!", "scene_analyses": value,
+        })
+        assert response.status_code == 400
+
+
 def test_vox_controllable_clone_requires_reference_audio() -> None:
     response = client.post(
         "/api/generate",

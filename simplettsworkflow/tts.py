@@ -296,6 +296,7 @@ class QwenTTSService:
         texts: list[str],
         scene_dubbing_mode: str = SCENE_DUBBING_MODE_AUTO,
         assisted_inputs: list[AssistedSceneInput] | None = None,
+        reused_analyses: list[EmotionAnalysis] | None = None,
         cfg_value: float = 2.0,
         inference_timesteps: int = 10,
         normalize: bool = False,
@@ -315,20 +316,26 @@ class QwenTTSService:
 
         analysis_started_at = time.perf_counter()
         logger.info(
-            "Scene dubbing emotion analysis started: mode=%s items=%s analyzer=%s",
+            "Scene dubbing emotion instructions preparing: mode=%s items=%s analyzer=%s",
             scene_dubbing_mode,
             len(clean_texts),
             self.emotion_analyzer.model_id,
         )
-        # EmotionAnalyzer releases its llama.cpp GPU context before returning,
-        # so VoxCPM2 never has to share persistent VRAM with the analysis model.
-        if scene_dubbing_mode == SCENE_DUBBING_MODE_ASSISTED:
+        # Regeneration preserves the chosen delivery and avoids loading Qwen again.
+        if reused_analyses is not None:
+            if (len(reused_analyses) != len(clean_texts)
+                    or any(analysis.text != text or analysis.index != index
+                           for index, (analysis, text) in enumerate(zip(reused_analyses, clean_texts), 1))):
+                raise ValueError("Reused emotion analyses must match target texts and indices.")
+            analyses = reused_analyses
+            logger.info("Reusing selected emotion instructions: items=%s; skipping Qwen", len(analyses))
+        elif scene_dubbing_mode == SCENE_DUBBING_MODE_ASSISTED:
             analyses = self.emotion_analyzer.analyze_assisted(assisted_inputs)
         else:
             analyses = self.emotion_analyzer.analyze_lines(clean_texts)
         logger.info(
-            "Scene dubbing emotion analysis completed: mode=%s items=%s elapsed=%.2fs; "
-            "Qwen context released, handing off to VoxCPM2",
+            "Scene dubbing emotion instructions ready: mode=%s items=%s elapsed=%.2fs; "
+            "handing off to VoxCPM2",
             scene_dubbing_mode,
             len(analyses),
             time.perf_counter() - analysis_started_at,

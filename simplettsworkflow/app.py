@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import shutil
 import time
 from datetime import datetime
@@ -15,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from .candidates import CandidateStore
 
-from .emotion import AssistedSceneInput, parse_assisted_scene_blocks
+from .emotion import AssistedSceneInput, EmotionAnalysis, parse_assisted_scene_blocks
 from .logging_config import configure_application_logging
 from .settings import BASE_DIR, OUTPUT_DIR, ROLE_DIR, UPLOAD_DIR
 from .tts import (
@@ -120,6 +121,7 @@ async def generate(
     inference_timesteps: int = Form(10),
     normalize: bool = Form(False),
     denoise: bool = Form(False),
+    scene_analyses: str = Form(""),
 ):
     request_started_at = time.perf_counter()
     assisted_inputs: list[AssistedSceneInput] | None = None
@@ -148,6 +150,30 @@ async def generate(
         lines = split_text_lines(texts)
     if not lines:
         raise HTTPException(status_code=400, detail="At least one target text line is required.")
+
+    reused_analyses = None
+    if scene_analyses:
+        try:
+            if mode != MODE_SCENE_DUBBING:
+                raise ValueError("只有情景配音支持复用情绪指令。")
+            values = json.loads(scene_analyses)
+            if not isinstance(values, list) or len(values) != len(lines):
+                raise ValueError("复用指令条数与文本不一致。")
+            reused_analyses = []
+            for index, (value, text) in enumerate(zip(values, lines), start=1):
+                if not isinstance(value, dict) or value.get("text") != text:
+                    raise ValueError("复用指令的原句与目标文本不一致。")
+                instruction = value.get("instruction")
+                if not isinstance(instruction, str) or not 2 <= len(instruction.strip()) <= 160:
+                    raise ValueError("复用情绪指令无效。")
+                guidance = assisted_inputs[index - 1] if assisted_inputs else None
+                reused_analyses.append(EmotionAnalysis(
+                    index=index, text=text, instruction=instruction,
+                    description=guidance.description if guidance else None,
+                    keywords=guidance.keywords if guidance else (),
+                ))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     logger.info(
         "TTS request received: mode=%s scene_dubbing_mode=%s items=%s language=%s cfg=%s "
@@ -186,6 +212,7 @@ async def generate(
                 texts=lines,
                 scene_dubbing_mode=scene_dubbing_mode,
                 assisted_inputs=assisted_inputs,
+                **({"reused_analyses": reused_analyses} if reused_analyses is not None else {}),
                 cfg_value=cfg_value,
                 inference_timesteps=inference_timesteps,
                 normalize=normalize,

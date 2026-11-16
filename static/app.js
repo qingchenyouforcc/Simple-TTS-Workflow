@@ -253,7 +253,9 @@ async function generateAudio(data) {
   setResultState("loading", "正在生成");
   message.className = "message";
   if (data.get("mode") === "scene_dubbing") {
-    message.textContent = data.get("scene_dubbing_mode") === "assisted"
+    message.textContent = appending
+      ? "正在沿用选中版本的情绪指令重新配音，不再进行情绪分析。"
+      : data.get("scene_dubbing_mode") === "assisted"
       ? "Qwen3.5 正在根据描述与关键词生成情绪指令，随后将由 VoxCPM2 完成配音。首次使用需要下载模型，请保持页面开启。"
       : "Qwen3.5 正在自识别每行文本的情绪，随后将由 VoxCPM2 生成音频。首次使用需要下载模型，请保持页面开启。";
   } else {
@@ -265,7 +267,7 @@ async function generateAudio(data) {
   try {
     const response = await fetch("/api/generate", {
       method: "POST",
-      body: data,
+      body: appending ? regenerationData(data, resultGroups) : data,
     });
     const payload = await parseResponse(response);
     if (!response.ok) {
@@ -394,9 +396,10 @@ async function regenerateOne(group) {
   let completed = 0;
   setLoading(true);
   try {
+    const requestData = regenerationData(data, [group]);
     for (let attempt = 1; attempt <= count; attempt += 1) {
     setResultState("loading", "第 " + group.index + " 条 · 正在生成 " + attempt + "/" + count);
-    const response = await fetch("/api/generate", { method: "POST", body: data });
+    const response = await fetch("/api/generate", { method: "POST", body: requestData });
     const payload = await parseResponse(response);
     if (!response.ok) throw new Error(payload.detail || "重新生成失败，请重试。");
     if (payload.items?.length !== 1) throw new Error("服务器未返回单条音频，请重试。");
@@ -413,6 +416,21 @@ async function regenerateOne(group) {
   } finally {
     setLoading(false);
   }
+}
+
+function regenerationData(data, groups) {
+  const copy = new FormData();
+  for (const [key, value] of data.entries()) copy.append(key, value);
+  copy.delete("scene_analyses");
+  if (data.get("mode") === "scene_dubbing") {
+    const analyses = groups.map((group) => {
+      const version = group.versions[group.selected];
+      if (!version.analysis?.instruction) throw new Error("选中版本缺少情绪指令，请重新创作此条音频。");
+      return { text: version.item.text, instruction: version.analysis.instruction };
+    });
+    copy.set("scene_analyses", JSON.stringify(analyses));
+  }
+  return copy;
 }
 
 async function retainSelectedCandidates() {

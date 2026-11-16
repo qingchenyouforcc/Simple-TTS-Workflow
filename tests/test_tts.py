@@ -297,6 +297,32 @@ def test_scene_dubbing_analyzes_before_loading_vox_and_writes_metadata(monkeypat
     assert metadata["emotion_analyses"][1]["instruction"].startswith("悲伤克制")
 
 
+def test_scene_regeneration_reuses_instruction_without_loading_analyzer(monkeypatch, tmp_path: Path) -> None:
+    class ForbiddenAnalyzer:
+        model_id = "test/emotion"
+
+        def analyze_lines(self, texts):
+            pytest.fail("Regeneration must not reanalyze emotions")
+
+        def analyze_assisted(self, items):
+            pytest.fail("Regeneration must not reanalyze assisted emotions")
+
+    model = FakeVoxModel()
+    service = QwenTTSService(output_dir=tmp_path, emotion_analyzer=ForbiddenAnalyzer())
+    monkeypatch.setattr(service, "_load_voxcpm_model", lambda: model)
+    monkeypatch.setattr("simplettsworkflow.tts.sf.write", lambda *args: None)
+    instruction = "情绪：惊恐；强度：高；语速：极快；音高：高；音量：爆发；节奏与停顿：短促"
+    analysis = EmotionAnalysis(index=1, text="Ow!", instruction=instruction)
+    for _ in range(3):
+        result = service.generate_scene_dubbing(
+            ref_audio_path=tmp_path / "voice.wav", texts=["Ow!"], reused_analyses=[analysis],
+        )
+        assert result.emotion_analyses == [analysis]
+    assert len(model.generate_calls) == 3
+    assert len({call["text"] for call in model.generate_calls}) == 1
+    assert instruction in model.generate_calls[0]["text"]
+
+
 def test_scene_dubbing_analysis_failure_does_not_load_vox(monkeypatch, tmp_path: Path) -> None:
     class FailingAnalyzer:
         model_id = "local/emotion.gguf"

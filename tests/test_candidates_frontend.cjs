@@ -106,6 +106,26 @@ test('configured retries run sequentially and preserve partial success', async (
   assert.equal(c.generationInProgress, false);
 });
 
+test('scene retries freeze the selected delivery for every attempt', async () => {
+  const c = harness();
+  c.regenerationCount = 3;
+  c.lastGenerationData.set('mode', 'scene_dubbing');
+  const group = {index: 2, input: 'Ow!', selected: 1, versions: [
+    {number: 1, item: {text: 'Ow!'}, analysis: {instruction: 'old'}},
+    {number: 2, item: {text: 'Ow!'}, analysis: {instruction: 'selected delivery'}},
+  ]};
+  let calls = 0;
+  c.fetch = async (_, options) => {
+    calls++;
+    assert.deepEqual(JSON.parse(options.body.get('scene_analyses')), [{text: 'Ow!', instruction: 'selected delivery'}]);
+    return {ok: true, payload: {items: [{index: 1, text: 'Ow!'}], emotion_analyses: [{instruction: 'selected delivery'}]}};
+  };
+  await c.regenerateOne(group);
+  assert.equal(calls, 3);
+  assert.equal(group.versions.length, 5);
+  assert.equal(c.lastGenerationData.has('scene_analyses'), false);
+});
+
 test('settings default to three and validate stored counts', () => {
   const c = harness();
   vm.runInContext(source.slice(source.indexOf('function loadRegenerationCount('), source.indexOf('const modeNotes')), c);
